@@ -1,0 +1,31 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - forbidigo
+    - govet
+    - ineffassign
+    - sloglint
+    - staticcheck
+    - unused
+  settings:
+    # Default forbidigo patterns ban fmt.Print* and print/println, which
+    # would corrupt the TUI.
+    sloglint:
+      context: all
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - golines
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/loderunner/logi)
+    golines:
+      max-len: 80
+      tab-len: 4
