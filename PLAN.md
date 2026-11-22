@@ -67,12 +67,13 @@ the same ingest path for both:
   logi ignores rotation and truncation.
 - Stdin is read with plain blocking reads until EOF. The status bar then
   shows `EOF`.
-- Following a file polls: at EOF the reader sleeps 100ms and reads again.
-  A read on a regular file returns EOF at once instead of blocking until
-  more data arrives (checked on Go 1.27: under 1µs per read), and Go's
-  runtime poller doesn't handle regular files. 100ms matches the ingest
-  flush interval, so it adds no visible latency and needs no fsnotify
-  dependency.
+- Following a file waits for writes with fsnotify, watching that one file.
+  The reader adds the watch before its first read, so a write between the
+  last read and the wait isn't missed. At EOF it blocks until a `Write`
+  event arrives, then reads again. Other events are ignored: rotation and
+  truncation are out of scope. A read on a regular file returns EOF at once
+  instead of blocking until more data arrives, so the reader can't just
+  call `Read` in a loop.
 - Each line is parsed with `jsontext.Decoder`, with `AllowInvalidUTF8(true)`
   and `AllowDuplicateNames(true)`, because real logs break both rules.
 - Nested objects flatten to dotted keys (`http.status`). Arrays are kept as
@@ -90,7 +91,7 @@ the same ingest path for both:
 ### Concurrency
 
 - **Reader goroutine.** Reads lines from the file or stdin, blocking on
-  stdin and polling at EOF when following a file. Sends lines on a
+  stdin and waiting for file writes when following a file. Sends lines on a
   channel.
 - **Ingest goroutine.** The only writer. It parses lines, adds columns for
   new keys, and appends rows with the DuckDB Appender. It flushes every 10k
@@ -215,7 +216,7 @@ the same ingest path for both:
 | `kql/` | Filter parser, AST, and compiling to a `logstore` filter. |
 | `tui/` | Root model: layout, focus, key map, status bar. |
 | `tui/table/`, `tui/histogram/`, `tui/filterbar/`, `tui/picker/`, `tui/detail/` | One package per pane. |
-| `internal/genlogs/`, `cmd/genlogs/` | Synthetic log generator, for tests and manual runs. |
+| `cmd/genlogs/` | Synthetic log generator, for tests and manual runs. |
 
 ## Deliverables
 
