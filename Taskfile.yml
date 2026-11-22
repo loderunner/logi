@@ -6,6 +6,11 @@ tasks:
       - task --list
     silent: true
 
+  download:
+    desc: Download the Go modules
+    cmds:
+      - go mod download
+
   generate:
     desc: Regenerate the mocks with mockgen
     cmds:
