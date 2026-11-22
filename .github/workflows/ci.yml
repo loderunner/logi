@@ -29,6 +29,8 @@ jobs:
           version: v2.15.0
           install-only: true
 
+      - run: task download
+
       - parallel:
           - run: task build
           - run: task lint
