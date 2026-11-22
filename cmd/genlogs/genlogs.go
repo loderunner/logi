@@ -4,7 +4,7 @@
 // The output has nested objects, an array field, keys that appear on only
 // some lines, about 2% out-of-order timestamps and about 0.1% lines that
 // aren't JSON.
-package genlogs
+package main
 
 import (
 	"bufio"
@@ -17,8 +17,8 @@ import (
 	"uuid"
 )
 
-// Options controls what Write produces.
-type Options struct {
+// options controls what Write produces.
+type options struct {
 	// Size is the approximate number of bytes to write. Write stops at the
 	// first line boundary past Size.
 	Size int64
@@ -110,9 +110,9 @@ var (
 	}
 )
 
-// Write writes synthetic log lines to w until about opts.Size bytes have
+// write writes synthetic log lines to w until about opts.Size bytes have
 // been written.
-func Write(w io.Writer, opts Options) error {
+func write(w io.Writer, opts options) error {
 	r := rand.New(rand.NewPCG(opts.Seed, opts.Seed^0x9e3779b97f4a7c15))
 	bw := bufio.NewWriterSize(w, 1<<20)
 	t := opts.Start
@@ -127,8 +127,11 @@ func Write(w io.Writer, opts Options) error {
 		t = t.Add(time.Duration(r.IntN(40_000)) * time.Microsecond)
 
 		if r.IntN(1000) == 0 {
-			n, err := fmt.Fprintf(bw, "panic: runtime error at %s\n",
-				t.Format(time.RFC3339Nano))
+			n, err := fmt.Fprintf(
+				bw,
+				"panic: runtime error at %s\n",
+				t.Format(time.RFC3339Nano),
+			)
 			if err != nil {
 				return fmt.Errorf("write plain line: %w", err)
 			}

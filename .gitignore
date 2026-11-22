@@ -1,0 +1,9 @@
+# Build output
+bin/
+
+# Coverage
+*.out
+coverage.*
+
+# macOS
+.DS_Store

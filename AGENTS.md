@@ -1,0 +1,59 @@
+# AGENTS.md
+
+## What this is
+
+logi is a terminal UI for JSONL logs: Kibana as `htop`. It reads a file or
+stdin, keeps reading as input grows, and shows the lines in a table backed by
+an in-memory DuckDB. See [PLAN.md](PLAN.md) for the design and the
+deliverables (E1, E2…).
+
+## Layout
+
+```
+main.go                 wiring: store, reader, ingest, TUI
+cmd/genlogs/            writes synthetic logs to stdout
+logstore/               the only package that writes SQL (DuckDB)
+ingest/                 reads lines (file, stdin) and appends them to the store
+  mock_/                generated mocks for ingest's interfaces
+tui/                    the bubbletea root model
+  table/                the table pane
+  mock_/                generated mocks for tui's interfaces
+```
+
+Each feature package owns its slice. Interfaces are declared in the package
+that uses them (`ingest.Appender`, `tui.Rows`), and the concrete types in
+`logstore` satisfy them. `main.go` connects the two.
+
+## Tasks
+
+Tooling: `brew install go go-task golangci-lint`. Building needs a C
+toolchain, because DuckDB uses cgo. mockgen is a Go tool in `go.mod`, so
+there is nothing else to install. Use `task`, not raw `go` or
+`golangci-lint`, except for single tests.
+
+- `task generate`: `go generate ./...`, which regenerates the mocks. Run it
+  after changing an interface that has a mock, and commit the result.
+- `task fmt`: golangci-lint fmt. Run after editing `.go` files.
+- `task lint`: golangci-lint run.
+- `task test`: `go test -race ./...`.
+- `task build`: `logi` and `genlogs` into `bin/`.
+
+Before calling a change done, run `task generate fmt lint test build`.
+
+## Conventions
+
+- Before writing, editing or reviewing any `.go` file, invoke the
+  `loderunner:go-conventions` skill and follow it.
+- **bubbletea models** use value receivers and shallow copies of the model by
+  default. Clone at the boundaries: when a slice or map leaves `Update`
+  inside a `tea.Cmd` closure, and when two owners would otherwise share a
+  mutable collection. Everywhere else, mutate your own copy freely.
+- Cmds do their work in the returned closure and report errors as messages,
+  as in the bubbletea commands tutorial.
+- Mocks are generated with mockgen into `mock_/` subpackages and committed.
+  The package is named `<parent>_mock`.
+- `fmt.Print*` is banned (`forbidigo`) because it corrupts the TUI. Write to
+  `os.Stderr` with `fmt.Fprint*` when a command needs to print.
+- SQL lives only in `logstore`.
+- Formatting Markdown and YAML files with Prettier is recommended but not
+  mandatory. Markdown should be formatted with `proseWrap: always`.
