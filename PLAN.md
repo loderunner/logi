@@ -23,6 +23,10 @@ Supported, but not optimized: files up to 4 GB.
   `encoding/json/jsontext`, `uuid` and `testing/synctest`.
 - `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`,
   `charm.land/lipgloss/v2`.
+  - The table is our own, not `bubbles/table`. That one holds every row in a
+    slice, stops its cursor silently at the first and last rows, always draws
+    a header, and doesn't sanitize. We query only the rows on screen.
+    bubbles is for the filter's text input.
 - `github.com/duckdb/duckdb-go/v2`, which needs cgo. Building needs a C
   toolchain.
 - `github.com/spf13/viper` and `github.com/spf13/pflag` for configuration.
@@ -54,6 +58,18 @@ the same ingest path for both:
   - `vals` is all values joined with spaces, for free-text search. Keys are
     never searched.
   - When a key first appears, logi adds its column with `ALTER TABLE`.
+  - Key columns have generated names (`k1`, `k2`, …), and `logstore` keeps
+    the key-to-column map. DuckDB identifiers are case-insensitive, and `id`,
+    `ts`, `raw` and `vals` are taken, so keys such as `ID`, `raw`, or `Level`
+    next to `level` would collide. Callers pass keys. Only `logstore` sees
+    column names. A key becomes visible to queries after its `ALTER TABLE`
+    commits.
+  - Value text: a string is its decoded text, and a number or boolean is its
+    literal text. A `null` and an empty object have no value, so they have no
+    column. An array is compact JSON text. With duplicate keys, the last one
+    wins.
+  - A VARCHAR that isn't valid UTF-8 would silently become `NULL`, so
+    `logstore` replaces invalid bytes with U+FFFD.
 - Every key column is `VARCHAR`, so a key can't change type between lines.
   Numeric comparisons compile to `TRY_CAST(col AS DOUBLE)`, which the
   benchmark measured as fast as typed columns.
@@ -78,7 +94,10 @@ the same ingest path for both:
   and `AllowDuplicateNames(true)`, because real logs break both rules.
 - Nested objects flatten to dotted keys (`http.status`). Arrays are kept as
   JSON text.
-- A line that isn't JSON becomes a row with a single `_raw` key.
+- A line that isn't JSON becomes a row with a single `_raw` key. So does a
+  JSON value that isn't an object, and an object followed by anything but
+  whitespace. Such a line never has partial fields, and its `vals` is the
+  line.
 - Timestamps:
   - The time field is detected among `time`, `ts`, `timestamp` and
     `@timestamp`, or set with `--time-field`.
@@ -137,7 +156,16 @@ the same ingest path for both:
     away pauses following, and the view stays anchored on the top row's
     `(ts, id)`, so late lines don't shift what you're reading.
 - **Default columns.** Timestamp, a level-like key and a message-like key
-  when detected; otherwise timestamp and `_raw`.
+  when detected; otherwise timestamp and `_raw`. Keys match without regard to
+  case, in priority order. Level: `level`, `lvl`, `severity`, `loglevel`,
+  `log_level`, `levelname`. Message: `msg`, `message`, `text`, `log`, `event`.
+  When every shown key is empty for a row, the row shows its raw line across
+  those columns. That covers non-JSON lines and JSON lines without a level
+  or message.
+- **Column widths.** The timestamp is fixed. Another column except the last
+  is as wide as the widest value it has shown, capped at a quarter of the
+  pane, so streaming `info` and `error` rows don't make the message column
+  jump. The last column takes the rest.
 - **Detail pane.** Enter on a row opens its pretty-printed JSON. Esc closes
   it.
 - **Column picker**

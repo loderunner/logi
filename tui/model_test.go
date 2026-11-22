@@ -39,8 +39,8 @@ func TestModel(t *testing.T) {
 				mockRows := tui_mock.NewMockRows(ctrl)
 				// The status bar takes one of the 6 lines.
 				mockRows.EXPECT().
-					Newest(gomock.Any(), 5).
-					Return([]logstore.Row{{ID: 2, Raw: "newer"}, {ID: 1, Raw: "older"}}, nil)
+					Newest(gomock.Any(), 5, []string{"_raw"}).
+					Return([]logstore.Row{{ID: 2, Raw: "newer", Values: []string{""}}, {ID: 1, Raw: "older", Values: []string{""}}}, nil)
 
 				m := New(mockRows, Options{FileSize: 100})
 				m, cmd := update(t, m, size)
@@ -53,18 +53,94 @@ func TestModel(t *testing.T) {
 				m, _ = update(t, m, cmd())
 
 				require.Equal(t, "newer", m.table.Rows()[0].Raw)
-				require.Contains(t, m.View().Content, "newer\nolder")
+				require.Contains(
+					t,
+					m.View().Content,
+					"1970-01-01 00:00:00.000 newer\n1970-01-01 00:00:00.000 older",
+				)
 			},
 		)
+
+		t.Run("new keys change the keys the table queries", func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockRows := tui_mock.NewMockRows(ctrl)
+
+			var asked [][]string
+
+			mockRows.EXPECT().
+				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, _ int, keys []string) ([]logstore.Row, error) {
+					asked = append(asked, keys)
+					return nil, nil
+				}).
+				Times(4)
+
+			m := New(mockRows, Options{FileSize: 100})
+			m, cmd := update(t, m, size)
+			cmd()
+
+			// Keys that aren't level or message leave the default.
+			m, cmd = update(
+				t,
+				m,
+				ingest.Ingested{Rows: 1, NewKeys: []string{"a"}},
+			)
+			cmd()
+
+			m, cmd = update(
+				t,
+				m,
+				ingest.Ingested{Rows: 2, NewKeys: []string{"Msg", "b"}},
+			)
+			cmd()
+
+			m, cmd = update(
+				t,
+				m,
+				ingest.Ingested{Rows: 3, NewKeys: []string{"LVL"}},
+			)
+			cmd()
+
+			// The Cmd's keys don't change when the model's do.
+			require.Equal(t, [][]string{
+				{"_raw"}, {"_raw"}, {"Msg"}, {"LVL", "Msg"},
+			}, asked)
+			require.Equal(t, []string{"LVL", "Msg"}, m.keys)
+			require.Equal(t, []string{"a", "Msg", "b", "LVL"}, m.known)
+		})
+
+		t.Run("drops a result queried with old keys", func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockRows := tui_mock.NewMockRows(ctrl)
+			mockRows.EXPECT().
+				Newest(gomock.Any(), gomock.Any(), []string{"_raw"}).
+				Return([]logstore.Row{{ID: 1, Raw: "old", Values: []string{"x"}}}, nil)
+			mockRows.EXPECT().
+				Newest(gomock.Any(), gomock.Any(), []string{"msg"}).
+				Return([]logstore.Row{{ID: 1, Raw: "new", Values: []string{"y"}}}, nil)
+
+			m := New(mockRows, Options{FileSize: 100})
+			m, oldCmd := update(t, m, size)
+			m, newCmd := update(
+				t,
+				m,
+				ingest.Ingested{Rows: 1, NewKeys: []string{"msg"}},
+			)
+
+			m, _ = update(t, m, newCmd())
+			m, _ = update(t, m, oldCmd())
+
+			require.Equal(t, "new", m.table.Rows()[0].Raw)
+		})
 
 		t.Run("drops a stale result", func(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockRows := tui_mock.NewMockRows(ctrl)
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any()).
+				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
 				Return([]logstore.Row{{ID: 1, Raw: "stale"}}, nil)
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any()).
+				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
 				Return([]logstore.Row{{ID: 2, Raw: "fresh"}}, nil)
 
 			m := New(mockRows, Options{FileSize: 100})
@@ -88,8 +164,8 @@ func TestModel(t *testing.T) {
 			var queryCtx context.Context
 
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any()).
-				DoAndReturn(func(ctx context.Context, _ int) ([]logstore.Row, error) {
+				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
+				DoAndReturn(func(ctx context.Context, _ int, _ []string) ([]logstore.Row, error) {
 					queryCtx = ctx
 					return nil, nil
 				})
@@ -107,7 +183,7 @@ func TestModel(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockRows := tui_mock.NewMockRows(ctrl)
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any()).
+				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
 				Return(nil, errors.New("INTERRUPT Error: Interrupted!"))
 
 			m := New(mockRows, Options{FileSize: 100})
@@ -140,7 +216,7 @@ func TestModel(t *testing.T) {
 				mockRows := tui_mock.NewMockRows(ctrl)
 				boom := errors.New("boom")
 				mockRows.EXPECT().
-					Newest(gomock.Any(), gomock.Any()).
+					Newest(gomock.Any(), gomock.Any(), gomock.Any()).
 					Return(nil, boom)
 
 				m := New(mockRows, Options{FileSize: 100})

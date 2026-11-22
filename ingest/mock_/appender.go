@@ -40,25 +40,26 @@ func (m *MockAppender) EXPECT() *MockAppenderMockRecorder {
 }
 
 // Append mocks base method.
-func (m *MockAppender) Append(id, ts int64, raw string) error {
+func (m *MockAppender) Append(id, ts int64, raw, vals string, fields map[string]string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Append", id, ts, raw)
+	ret := m.ctrl.Call(m, "Append", id, ts, raw, vals, fields)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Append indicates an expected call of Append.
-func (mr *MockAppenderMockRecorder) Append(id, ts, raw any) *gomock.Call {
+func (mr *MockAppenderMockRecorder) Append(id, ts, raw, vals, fields any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Append", reflect.TypeOf((*MockAppender)(nil).Append), id, ts, raw)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Append", reflect.TypeOf((*MockAppender)(nil).Append), id, ts, raw, vals, fields)
 }
 
 // Flush mocks base method.
-func (m *MockAppender) Flush() error {
+func (m *MockAppender) Flush() ([]string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Flush")
-	ret0, _ := ret[0].(error)
-	return ret0
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // Flush indicates an expected call of Flush.
