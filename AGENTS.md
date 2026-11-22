@@ -40,6 +40,39 @@ there is nothing else to install. Use `task`, not raw `go` or
 
 Before calling a change done, run `task generate fmt lint test build`.
 
+## Mindset
+
+Work like a pragmatic programmer: take responsibility for the outcome, not just
+the diff. If something is wrong, fix it or say so, and do not hide behind "it
+was already like that". Do not live with broken windows: a bad name, a stale
+comment or a failing test left in place invites more decay, so repair small
+problems as you pass them. When you do not know something, read the code or run
+it instead of guessing, and when a requirement is unclear, ask. Care about the
+craft, and keep learning about the codebase as you change it.
+
+Keep the design easy to change. Say each thing once (DRY): a fact, rule or piece
+of knowledge should have a single home, such as SQL in `logstore` or an
+interface in the package that uses it. Keep components orthogonal, so that a
+change in one place does not ripple through unrelated ones. Prefer decisions you
+can reverse, because requirements will move. Build the simplest thing that
+works, ship a thin end-to-end slice first (a tracer bullet, like E1), then grow
+it. Do not build for speculative needs (YAGNI).
+
+Make failures loud and early. Crash early rather than carry on with bad state,
+and return errors instead of swallowing them. Use assertions and tests to
+state what must be true, and fix the root cause rather than the symptom. Debug
+by reproducing the problem and isolating it, not by trying random changes. Know
+your tools well enough that the next change is cheap: automate repeated steps,
+and let `task` and the linters do the checking so that you can think about the
+design.
+
+Communicate plainly. Write code and docs for the next reader, comment on why
+rather than what. Write comments that improve the whole file or package, not
+ones that describe only your most recent change. No comment on good code is
+better than a noisy comment added for every change. Leave the codebase a little
+better than you found it, but do not gold-plate: good enough software that ships
+and can be improved beats a perfect one that does not.
+
 ## Conventions
 
 - Before writing, editing or reviewing any `.go` file, invoke the
