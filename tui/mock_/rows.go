@@ -42,16 +42,16 @@ func (m *MockRows) EXPECT() *MockRowsMockRecorder {
 }
 
 // Newest mocks base method.
-func (m *MockRows) Newest(ctx context.Context, limit int) ([]logstore.Row, error) {
+func (m *MockRows) Newest(ctx context.Context, limit int, keys []string) ([]logstore.Row, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Newest", ctx, limit)
+	ret := m.ctrl.Call(m, "Newest", ctx, limit, keys)
 	ret0, _ := ret[0].([]logstore.Row)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Newest indicates an expected call of Newest.
-func (mr *MockRowsMockRecorder) Newest(ctx, limit any) *gomock.Call {
+func (mr *MockRowsMockRecorder) Newest(ctx, limit, keys any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Newest", reflect.TypeOf((*MockRows)(nil).Newest), ctx, limit)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Newest", reflect.TypeOf((*MockRows)(nil).Newest), ctx, limit, keys)
 }

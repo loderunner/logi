@@ -5,6 +5,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,8 +30,13 @@ const (
 
 // Rows is where the TUI gets rows to show. *logstore.Store satisfies it.
 type Rows interface {
-	// Newest returns up to limit rows, newest first.
-	Newest(ctx context.Context, limit int) ([]logstore.Row, error)
+	// Newest returns up to limit rows, newest first, each with the value of
+	// every key in keys.
+	Newest(
+		ctx context.Context,
+		limit int,
+		keys []string,
+	) ([]logstore.Row, error)
 }
 
 // Options describes the input, for the status bar.
@@ -69,6 +75,11 @@ type Model struct {
 	table         table.Model
 	width, height int
 
+	// known lists every key seen so far, in order of appearance. keys is the
+	// subset the table shows.
+	known []string
+	keys  []string
+
 	// gen numbers window queries. cancel stops the one in flight. A result
 	// with an older gen is dropped.
 	gen    int
@@ -89,6 +100,7 @@ func New(source Rows, opts Options) Model {
 		source:  source,
 		opts:    opts,
 		table:   table.New(),
+		keys:    defaultKeys(nil),
 		samples: []sample{{at: time.Now()}},
 	}
 }
@@ -124,6 +136,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.bytes = msg.Bytes
 		m.eof = msg.EOF
 		m.samples = append(m.samples, sample{at: time.Now(), rows: msg.Rows})
+		m = m.addKeys(msg.NewKeys)
 
 		return m.refresh()
 
@@ -175,20 +188,46 @@ func (m Model) refresh() (tea.Model, tea.Cmd) {
 	m.cancel = cancel
 	m.gen++
 
-	return m, queryRows(ctx, m.source, m.height, m.gen)
+	// The Cmd runs after Update returns, and m.keys may change by then.
+	keys := slices.Clone(m.keys)
+
+	return m, queryRows(ctx, m.source, m.height, keys, m.gen)
 }
 
-// queryRows loads the newest limit rows. It reports a failure as an ErrMsg,
+// addKeys records newly seen keys and, when they change the default columns,
+// switches the table to them. The refresh that follows loads rows for the
+// new keys, and its generation number drops results for the old ones.
+func (m Model) addKeys(newKeys []string) Model {
+	if len(newKeys) == 0 {
+		return m
+	}
+
+	m.known = append(m.known, newKeys...)
+
+	keys := defaultKeys(m.known)
+	if slices.Equal(keys, m.keys) {
+		return m
+	}
+
+	m.keys = keys
+	m.table = m.table.SetMessageColumn(messageIndex(keys)).ResetWidths()
+
+	return m
+}
+
+// queryRows loads the newest limit rows, with a value for each of keys. It reports a failure as an ErrMsg,
 // except when ctx was canceled, which means a newer query replaced it or the
 // program is quitting. The driver may not wrap context.Canceled, so the
 // check is on ctx, not on the error.
 func queryRows(
 	ctx context.Context,
 	source Rows,
-	limit, gen int,
+	limit int,
+	keys []string,
+	gen int,
 ) tea.Cmd {
 	return func() tea.Msg {
-		rows, err := source.Newest(ctx, limit)
+		rows, err := source.Newest(ctx, limit, keys)
 		if ctx.Err() != nil {
 			return nil
 		}

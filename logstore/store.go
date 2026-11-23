@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/duckdb/duckdb-go/v2"
 )
@@ -23,9 +24,21 @@ type Options struct {
 
 // Store is the log database. It is safe for concurrent use, except that it
 // has one Writer at a time.
+//
+// Each key found in the logs gets a VARCHAR column with a generated name,
+// k1, k2 and so on. DuckDB identifiers are case-insensitive and the table
+// already has id, ts, raw and vals, so a key such as "ID", "Level" next to
+// "level", or "raw" would collide with another column. Callers pass keys, and
+// only this package sees the column names.
 type Store struct {
 	db  *sql.DB
 	dir *privateDir
+
+	// columns maps each key to its column name. The Writer adds a key only
+	// after the ALTER TABLE that creates its column has committed, so a query
+	// never names a column that doesn't exist yet.
+	mu      sync.RWMutex
+	columns map[string]string
 }
 
 // Open removes the temporary directories that crashed runs left behind,
@@ -58,7 +71,7 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 
 	_, err = db.ExecContext(
 		ctx,
-		"CREATE TABLE logs(id BIGINT, ts BIGINT, raw VARCHAR)",
+		"CREATE TABLE logs(id BIGINT, ts BIGINT, raw VARCHAR, vals VARCHAR)",
 	)
 	if err != nil {
 		_ = db.Close()
@@ -67,7 +80,7 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		return nil, fmt.Errorf("create logs table: %w", err)
 	}
 
-	return &Store{db: db, dir: dir}, nil
+	return &Store{db: db, dir: dir, columns: make(map[string]string)}, nil
 }
 
 // Close closes the database and removes the private directory. Close the

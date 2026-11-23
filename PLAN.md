@@ -23,6 +23,10 @@ Supported, but not optimized: files up to 4 GB.
   `encoding/json/jsontext`, `uuid` and `testing/synctest`.
 - `charm.land/bubbletea/v2`, `charm.land/bubbles/v2`,
   `charm.land/lipgloss/v2`.
+  - The table is our own, not `bubbles/table`. That one holds every row in a
+    slice, stops its cursor silently at the first and last rows, always draws
+    a header, and doesn't sanitize. We query only the rows on screen.
+    bubbles is for the filter's text input.
 - `github.com/duckdb/duckdb-go/v2`, which needs cgo. Building needs a C
   toolchain.
 - `github.com/spf13/viper` and `github.com/spf13/pflag` for configuration.
@@ -52,8 +56,23 @@ the same ingest path for both:
   - `ts` is Unix nanoseconds.
   - `raw` is the original line.
   - `vals` is all values joined with spaces, for free-text search. Keys are
-    never searched.
+    never searched, except inside an array, which `vals` has as compact JSON
+    text. A string contributes its words only: every run of spaces and
+    unprintable characters, such as tabs and newlines, is one space, and
+    punctuation stays. A number or boolean contributes its literal text.
   - When a key first appears, logi adds its column with `ALTER TABLE`.
+  - Key columns have generated names (`k1`, `k2`, …), and `logstore` keeps
+    the key-to-column map. DuckDB identifiers are case-insensitive, and `id`,
+    `ts`, `raw` and `vals` are taken, so keys such as `ID`, `raw`, or `Level`
+    next to `level` would collide. Callers pass keys. Only `logstore` sees
+    column names. A key becomes visible to queries after its `ALTER TABLE`
+    commits.
+  - Value text: a string is its decoded text, and a number or boolean is its
+    literal text. A `null` and an empty object have no value, so they have no
+    column. An array is compact JSON text. With duplicate keys, the last one
+    wins.
+  - A VARCHAR that isn't valid UTF-8 would silently become `NULL`, so
+    `logstore` replaces invalid bytes with U+FFFD.
 - Every key column is `VARCHAR`, so a key can't change type between lines.
   Numeric comparisons compile to `TRY_CAST(col AS DOUBLE)`, which the
   benchmark measured as fast as typed columns.
@@ -78,7 +97,10 @@ the same ingest path for both:
   and `AllowDuplicateNames(true)`, because real logs break both rules.
 - Nested objects flatten to dotted keys (`http.status`). Arrays are kept as
   JSON text.
-- A line that isn't JSON becomes a row with a single `_raw` key.
+- A line that isn't JSON becomes a row with a single `_raw` key. So does a
+  JSON value that isn't an object, and an object followed by anything but
+  whitespace. Such a line never has partial fields, and its `vals` is the
+  line.
 - Timestamps:
   - The time field is detected among `time`, `ts`, `timestamp` and
     `@timestamp`, or set with `--time-field`.
@@ -128,6 +150,7 @@ the same ingest path for both:
 ### UI
 
 - **Table**
+  - A header row shows the column names, cut with `…` to the column width.
   - Sorted by `(ts, id)`, newest at the top by default. The timestamp
     header shows `▼` or `▲`.
   - The header row is a focus stop. Enter on it flips newest at the top or
@@ -137,7 +160,33 @@ the same ingest path for both:
     away pauses following, and the view stays anchored on the top row's
     `(ts, id)`, so late lines don't shift what you're reading.
 - **Default columns.** Timestamp, a level-like key and a message-like key
-  when detected; otherwise timestamp and `_raw`.
+  when detected; otherwise timestamp and `_raw`. Keys match without regard to
+  case, in priority order. Level: `level`, `lvl`, `severity`, `loglevel`,
+  `log_level`, `levelname`. Message: `msg`, `message`, `text`, `log`, `event`.
+  When every shown key is empty for a row, the row shows its raw line across
+  those columns. That covers non-JSON lines and JSON lines without a level
+  or message.
+- **Column widths.** The timestamp is fixed. Another column except the last
+  is as wide as the widest value it has shown, capped at a quarter of the
+  pane, so streaming `info` and `error` rows don't make the message column
+  jump. The last column takes the rest.
+- **Wide tables**
+  - The timestamp is always the first column when shown, whatever the order
+    columns were added in. It's pinned: it never scrolls, and a `│`
+    separates it from the other columns. Without it, every column scrolls.
+  - The timestamp shows as `01-02 15:04:05.000` in local time: 18 cells,
+    because it's on screen at all times.
+  - When the columns are wider than the pane, `←`/`→` scroll them by whole
+    columns, and Home/End jump to the first or last column. Scrolling stops
+    once the last column is fully in view. The offset is clamped when the
+    columns change, and adding a column at the end doesn't move the view.
+  - Whole columns fill the pane from the offset. The space left shows the
+    next column cut off, so `→` brings it fully into view.
+  - Markers are in the header row only. The `│` after the timestamp becomes
+    `‹` when columns are hidden on the left, and the header's last cell
+    becomes `›` when columns are hidden on the right. That tells a cut-off
+    column apart from a value cut with `…`.
+  - A newline in a value shows as `↵`.
 - **Detail pane.** Enter on a row opens its pretty-printed JSON. Esc closes
   it.
 - **Column picker**
@@ -167,6 +216,9 @@ the same ingest path for both:
   removed from the filter text input's key map; `→` still moves its
   cursor.
 - **Quit.** `q` (outside the filter) or Ctrl+C.
+- **Keys in the table.** `←`/`→` and Home/End scroll columns only while the
+  table has focus, its header included. The histogram and the filter use
+  them for their own cursors.
 - **Keys outside the filter.** `+`, `-`, `=`, `c` and `q` act only when
   the filter doesn't have focus. While it does, they're typed as text.
 
@@ -199,6 +251,8 @@ the same ingest path for both:
 - Wildcards in the middle of field values.
 - `kubectl` `--prefix` and `--timestamps` line prefixes.
 - Column reordering.
+- Scrolling inside a cell. A long value is cut with `…`, and the detail pane
+  shows it whole.
 - A stacked or per-level histogram.
 - Aggregations other than count.
 - Export.
@@ -250,15 +304,16 @@ one feature.
 | F5 | `msg:cache*`, `msg:*timeout`, `msg:*reset*`. | Wildcards at the front and back. |
 | F6 | `level:~ERROR`. | Case-insensitive terms. |
 | F7 | A bare `timeout` matches anywhere in the values. | Free-text terms over `vals`. |
-| F8 | Tab and `↑`/`↓` move between filter and table: filter, header, row 0, row 1. | Focus chain in the root model, header as a stop. |
+| F8 | Tab and `↑`/`↓` move between filter and table: filter, header, row 0, row 1. | Header row with the column names, focus chain in the root model, header as a stop. |
 | F9 | A histogram above the filter, filling in live as rows load. | `tui/histogram`, bucket query, bucket size from the terminal width, throttled refresh. Joins the focus chain. |
 | F10 | The histogram reshapes when the filter changes. | Filter shared between the histogram and table queries. |
 | F11 | In the histogram, `←`/`→` move a cursor, and `+`/`-` zoom around it. | Window state: span and cursor. |
 | F12 | Zooming or panning narrows the table to the visible window. | Window combined with the filter (AND) in table queries. |
 | F13 | `=` jumps back to the live edge and follows. Panning away stops following. | Pinned and unpinned states, linked to table follow. |
 | F14 | `c` opens a column picker. Toggling adds or removes columns. | `tui/picker`, list of known keys with type-to-narrow search. |
-| F15 | Columns are remembered on the next run, including with another file. Keys missing from that file stay hidden until they appear. | Column layout written to and read from the config file. |
-| F16 | Ctrl+X in the picker restores the default columns. | Reset, plus writing the reset layout back. |
-| F17 | Enter on the table header flips newest at the top or the bottom, with `▼`/`▲` on the timestamp header, and it's remembered. | Order toggle, follow at either end, persisted. |
-| F18 | Ctrl+G, Ctrl+F and Ctrl+T hide and show the panes, and it's remembered. `/` brings the filter back. | Pane visibility in the config file, layout reflow, Ctrl+F removed from the text input's key map. |
-| F19 | `logi --hide-histogram /tmp/app.log` and `LOGI_HIDE_LOG=1 logi …`. | `--hide-*` flags and environment variables, through config precedence. |
+| F15 | Adding columns past the screen width makes the table scroll: `←`/`→` by one column, Home/End to the first or last. The timestamp stays put, and `‹`/`›` in the header show hidden columns. | Column offset with clamping, timestamp pinned first behind `│`, header markers, the next column cut off at the right edge, the 18-cell local timestamp, `↵` for newlines. |
+| F16 | Columns are remembered on the next run, including with another file. Keys missing from that file stay hidden until they appear. | Column layout written to and read from the config file. |
+| F17 | Ctrl+X in the picker restores the default columns. | Reset, plus writing the reset layout back. |
+| F18 | Enter on the table header flips newest at the top or the bottom, with `▼`/`▲` on the timestamp header, and it's remembered. | Order toggle, follow at either end, persisted. |
+| F19 | Ctrl+G, Ctrl+F and Ctrl+T hide and show the panes, and it's remembered. `/` brings the filter back. | Pane visibility in the config file, layout reflow, Ctrl+F removed from the text input's key map. |
+| F20 | `logi --hide-histogram /tmp/app.log` and `LOGI_HIDE_LOG=1 logi …`. | `--hide-*` flags and environment variables, through config precedence. |

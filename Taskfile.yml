@@ -49,5 +49,6 @@ tasks:
 
   genlogs:
     desc: Write synthetic JSONL logs to stdout
+    silent: true
     cmds:
       - go run ./cmd/genlogs {{.CLI_ARGS}}
