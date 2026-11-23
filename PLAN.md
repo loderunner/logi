@@ -56,7 +56,10 @@ the same ingest path for both:
   - `ts` is Unix nanoseconds.
   - `raw` is the original line.
   - `vals` is all values joined with spaces, for free-text search. Keys are
-    never searched.
+    never searched, except inside an array, which `vals` has as compact JSON
+    text. A string contributes its words only: every run of spaces and
+    unprintable characters, such as tabs and newlines, is one space, and
+    punctuation stays. A number or boolean contributes its literal text.
   - When a key first appears, logi adds its column with `ALTER TABLE`.
   - Key columns have generated names (`k1`, `k2`, …), and `logstore` keeps
     the key-to-column map. DuckDB identifiers are case-insensitive, and `id`,

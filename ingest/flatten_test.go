@@ -39,10 +39,23 @@ func TestFlatten(t *testing.T) {
 			wantFields: map[string]string{"a.b": "1", "c": "2"},
 		},
 		{
-			name:       "arrays are compact JSON text",
-			line:       `{"tags": [ "a", {"b": 1},  null ] }`,
-			wantVals:   `["a",{"b":1},null]`,
-			wantFields: map[string]string{"tags": `["a",{"b":1},null]`},
+			name:     "arrays are compact JSON text, and set doesn't look inside",
+			line:     `{"tags": [ "a", {"b": 1},  null ] , "z":"1"}`,
+			wantVals: `["a",{"b":1},null] 1`,
+			wantFields: map[string]string{
+				"tags": `["a",{"b":1},null]`,
+				"z":    "1",
+			},
+		},
+		{
+			name:     "strings are words in vals and decoded text in fields",
+			line:     `{"m":"  Hello,  world! (a-b)\t\u00a0can't\n\u0000x ","n":"!!!","o":"y"}`,
+			wantVals: "Hello, world! (a-b) can't x !!! y",
+			wantFields: map[string]string{
+				"m": "  Hello,  world! (a-b)\t\u00a0can't\n\u0000x ",
+				"n": "!!!",
+				"o": "y",
+			},
 		},
 		{
 			name:     "numbers keep their literal text",
@@ -82,7 +95,7 @@ func TestFlatten(t *testing.T) {
 		{
 			name:       "escapes are decoded",
 			line:       `{"m":"a\"b\\c\ndé😀"}`,
-			wantVals:   "a\"b\\c\ndé😀",
+			wantVals:   "a\"b\\c dé😀",
 			wantFields: map[string]string{"m": "a\"b\\c\ndé😀"},
 		},
 		{
