@@ -141,6 +141,42 @@ func TestModel(t *testing.T) {
 			require.Equal(t, stamp+"012345678… end", m.View())
 		})
 
+		t.Run("the message column's cap has a floor", func(t *testing.T) {
+			long := strings.Repeat("m", 60)
+			rows := cellRows([]string{long, "end"})
+
+			// A quarter of 100 is 25 cells, below the floor of 40.
+			plain := New().SetSize(100, 1).SetRows(rows)
+			message := New().SetSize(100, 1).SetMessageColumn(0).SetRows(rows)
+
+			require.Equal(
+				t,
+				stamp+strings.Repeat("m", 24)+"… end",
+				plain.View(),
+			)
+			require.Equal(
+				t,
+				stamp+strings.Repeat("m", 39)+"… end",
+				message.View(),
+			)
+		})
+
+		t.Run(
+			"the message column keeps a quarter when that's wider",
+			func(t *testing.T) {
+				long := strings.Repeat("m", 100)
+				m := New().SetSize(200, 1).SetMessageColumn(0).
+					SetRows(cellRows([]string{long, "end"}))
+
+				// A quarter of 200 is 50 cells, above the floor.
+				require.Equal(
+					t,
+					stamp+strings.Repeat("m", 49)+"… end",
+					m.View(),
+				)
+			},
+		)
+
 		t.Run("the last column takes the rest and is cut", func(t *testing.T) {
 			m := New().SetSize(len(stamp)+10, 1).SetRows(cellRows(
 				[]string{"x", "0123456789abc"},

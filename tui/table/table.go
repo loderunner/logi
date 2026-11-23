@@ -23,6 +23,10 @@ const (
 	// maxColumnShare caps a column that isn't the last at this fraction of
 	// the pane, so one long value can't push the others off screen.
 	maxColumnShare = 4
+	// minMessageCap is the least the message column's cap can be. The message
+	// is the column you read, so a narrow pane doesn't squeeze it down to a
+	// quarter of the pane like the others.
+	minMessageCap = 40
 )
 
 // Model is the table pane. It holds the rows to show, newest first, and the
@@ -38,11 +42,30 @@ type Model struct {
 	// widths[i] is the widest cell shown so far in column i. It only grows,
 	// so a column doesn't jump when a short value follows a long one.
 	widths []int
+
+	// message is the index of the message column, or noMessage.
+	message int
 }
+
+// noMessage is the message index of a table with no message column.
+const noMessage = -1
 
 // New returns an empty table.
 func New() Model {
-	return Model{}
+	return Model{message: noMessage}
+}
+
+// SetMessageColumn returns the table treating column i as the message column,
+// which has a floor on its cap. Pass a negative i for none. Call
+// ResetWidths after it, because the widths depend on the caps.
+func (m Model) SetMessageColumn(i int) Model {
+	if i < 0 {
+		i = noMessage
+	}
+
+	m.message = i
+
+	return m
 }
 
 // SetSize returns the table resized to width columns and height lines.
@@ -155,14 +178,17 @@ func (m Model) line(row logstore.Row) string {
 // writeCells writes the cells of a row. Each is padded to its column's width
 // except the last, which takes whatever the line has left.
 func (m Model) writeCells(b *strings.Builder, values []string) {
-	limit := m.width / maxColumnShare
-
 	for i, value := range values {
 		value = sanitize(value)
 
 		if i == len(values)-1 {
 			b.WriteString(value)
 			return
+		}
+
+		limit := m.width / maxColumnShare
+		if i == m.message {
+			limit = max(limit, minMessageCap)
 		}
 
 		// The widths cover the rows being shown.
