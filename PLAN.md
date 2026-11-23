@@ -155,25 +155,28 @@ the same ingest path for both:
     header shows `▼` or `▲`.
   - The header row is a focus stop. Enter on it flips newest at the top or
     the bottom. Timestamp is the only sort key, so the header has no column
-    cursor; the stop is skipped when the timestamp column isn't shown.
+    cursor.
   - While you're at the newest row, the table follows new rows. Scrolling
     away pauses following, and the view stays anchored on the top row's
     `(ts, id)`, so late lines don't shift what you're reading.
-- **Default columns.** Timestamp, a level-like key and a message-like key
-  when detected; otherwise timestamp and `_raw`. Keys match without regard to
-  case, in priority order. Level: `level`, `lvl`, `severity`, `loglevel`,
-  `log_level`, `levelname`. Message: `msg`, `message`, `text`, `log`, `event`.
-  When every shown key is empty for a row, the row shows its raw line across
-  those columns. That covers non-JSON lines and JSON lines without a level
-  or message.
+- **Default columns.** Every known key except `_raw`. The timestamp comes
+  first, then a level-like key and a message-like key when detected, then
+  every other key in the order it first appeared. When `_raw` is the only
+  known key, it's the only column after the timestamp.
+  - Keys match without regard to case, in priority order. Level: `level`,
+    `lvl`, `severity`, `loglevel`, `log_level`, `levelname`. Message: `msg`,
+    `message`, `text`, `log`, `event`.
+  - `_raw` isn't a column next to other keys. When every shown key is empty
+    for a row, the row shows its raw line across those columns. That covers
+    non-JSON lines and JSON lines without any shown key.
 - **Column widths.** The timestamp is fixed. Another column except the last
   is as wide as the widest value it has shown, capped at a quarter of the
   pane, so streaming `info` and `error` rows don't make the message column
-  jump. The last column takes the rest.
+  jump. The message column's cap is at least 40 cells, because other columns
+  follow it and it's the one you read. The last column takes the rest.
 - **Wide tables**
-  - The timestamp is always the first column when shown, whatever the order
-    columns were added in. It's pinned: it never scrolls, and a `│`
-    separates it from the other columns. Without it, every column scrolls.
+  - The timestamp is always shown, as the first column. It's pinned: it
+    never scrolls, and a `│` separates it from the other columns.
   - The timestamp shows as `01-02 15:04:05.000` in local time: 18 cells,
     because it's on screen at all times.
   - When the columns are wider than the pane, `←`/`→` scroll them by whole
@@ -190,11 +193,27 @@ the same ingest path for both:
 - **Detail pane.** Enter on a row opens its pretty-printed JSON. Esc closes
   it.
 - **Column picker**
-  - `c` opens it, with type-to-narrow search over all known keys. Space
-    toggles a column.
-  - Columns appear in the order added, with no reordering.
-  - Ctrl+X resets to the default columns.
-  - A saved column whose key hasn't appeared yet stays hidden until it does.
+  - `c` opens it, with type-to-narrow search over all known keys except
+    `_raw`. Space toggles an entry. The timestamp isn't an entry, because it
+    can't be hidden.
+  - The first entry is "All keys". It's checked by default, and so is every
+    key: the table shows the default columns, and a new key becomes a column
+    when it appears.
+  - Unchecking a key unchecks "All keys". The layout becomes the list of
+    checked keys, and a new key stays hidden.
+  - Checking every key by hand doesn't check "All keys" again, so new keys
+    stay hidden. Only checking "All keys" brings back the default columns.
+  - Unchecking "All keys" unchecks every key, which leaves an empty list.
+    Checking keys then adds them in that order.
+  - With a list, columns appear in the order added, with no reordering.
+  - Ctrl+X checks "All keys", which resets to the default columns.
+  - The layout is saved in the `columns` key of the config file:
+    - "All keys": `columns` isn't set.
+    - A list: `columns` is the shown keys in order, such as
+      `["http.status", "http.method"]`. A saved key that hasn't appeared yet
+      stays hidden until it does.
+    - No keys: `columns` is `[]`. Every row shows its raw line after the
+      timestamp, as a row does when every shown key is empty.
 - **Histogram**
   - Counts the rows matching the filter. Bucket size comes from the visible
     span and the terminal width.
@@ -235,7 +254,7 @@ the same ingest path for both:
 - The config file is JSON.
 - These preferences changed in the TUI are written to the config file in
   use: pane visibility, column layout, and row order. logi writes only the
-  changed key. It never calls viper's `WriteConfig`, which would also dump
+  changed key, or removes it when a column reset unsets `columns`. It never calls viper's `WriteConfig`, which would also dump
   flag and environment overrides into the file.
 - Flags: `--config`, `--time-field`, `--memory-limit`, `--hide-histogram`,
   `--hide-filter`, `--hide-log`.
@@ -289,7 +308,7 @@ one feature.
 | # | You run | You see | Built |
 |---|---|---|---|
 | E1 | `logi /tmp/app.log`, `kubectl logs -f … \| logi`, and `go run ./cmd/genlogs >> /tmp/app.log` in another shell | Raw lines in a one-column table, newest at the top, filling while loading. Appended lines arrive. Status bar: rows, rows/s, % loaded or `EOF`. `q` quits. | Module setup, reader and ingest goroutines, in-memory DuckDB with a fixed memory limit and private temp directory (stale ones cleaned up), Appender batching, `Ingested` messages, bubbletea v2 table querying only the rows on screen, arrival-order `ts`. |
-| E2 | `logi /tmp/app.log` | Real columns: timestamp, level and message. Lines that aren't JSON show as `_raw`. | `jsontext` flattening, a `VARCHAR` column added per new key, `vals` column, detection of level and message keys. |
+| E2 | `logi /tmp/app.log` | Real columns: every key, level and message first. Lines that aren't JSON show their raw line across the row. | `jsontext` flattening, a `VARCHAR` column added per new key, `vals` column, detection of level and message keys, a width cap floor for the message column. |
 | E3 | `logi /tmp/app.log` | Rows sorted by their own timestamps, newest on top. Late lines don't move a scrolled view. | Timestamp detection and parsing, `ts` from the line with arrival time as fallback, keyset scrolling on `(ts, id)`, follow while at the top. |
 | E4 | `LOGI_TIME_FIELD=time logi --memory-limit 512MB /tmp/app.log` and `logi --help` | Flags, environment and config files all take effect, in precedence order. | `config/` with viper and pflag, `--config`, `--time-field`, `--memory-limit`, writing a single key back to the selected file. |
 
@@ -310,10 +329,10 @@ one feature.
 | F11 | In the histogram, `←`/`→` move a cursor, and `+`/`-` zoom around it. | Window state: span and cursor. |
 | F12 | Zooming or panning narrows the table to the visible window. | Window combined with the filter (AND) in table queries. |
 | F13 | `=` jumps back to the live edge and follows. Panning away stops following. | Pinned and unpinned states, linked to table follow. |
-| F14 | `c` opens a column picker. Toggling adds or removes columns. | `tui/picker`, list of known keys with type-to-narrow search. |
+| F14 | `c` opens a column picker, with "All keys" and every key checked. Unchecking a key hides its column, and new keys then stay hidden. | `tui/picker`, "All keys" entry, list of known keys with type-to-narrow search. |
 | F15 | Adding columns past the screen width makes the table scroll: `←`/`→` by one column, Home/End to the first or last. The timestamp stays put, and `‹`/`›` in the header show hidden columns. | Column offset with clamping, timestamp pinned first behind `│`, header markers, the next column cut off at the right edge, the 18-cell local timestamp, `↵` for newlines. |
-| F16 | Columns are remembered on the next run, including with another file. Keys missing from that file stay hidden until they appear. | Column layout written to and read from the config file. |
-| F17 | Ctrl+X in the picker restores the default columns. | Reset, plus writing the reset layout back. |
+| F16 | Columns are remembered on the next run, including with another file. Keys missing from that file stay hidden until they appear. | `columns` written to and read from the config file: unset for "All keys", the shown keys for a list, `[]` for none. |
+| F17 | Ctrl+X in the picker restores the default columns. | Reset to "All keys", plus removing `columns` from the config file. |
 | F18 | Enter on the table header flips newest at the top or the bottom, with `▼`/`▲` on the timestamp header, and it's remembered. | Order toggle, follow at either end, persisted. |
 | F19 | Ctrl+G, Ctrl+F and Ctrl+T hide and show the panes, and it's remembered. `/` brings the filter back. | Pane visibility in the config file, layout reflow, Ctrl+F removed from the text input's key map. |
 | F20 | `logi --hide-histogram /tmp/app.log` and `LOGI_HIDE_LOG=1 logi …`. | `--hide-*` flags and environment variables, through config precedence. |
