@@ -158,31 +158,29 @@ func (m Model) View() string {
 
 // line renders one row, cut to the width.
 func (m Model) line(row logstore.Row) string {
-	var b strings.Builder
+	c := clip{left: m.width}
 
-	b.WriteString(time.Unix(0, row.TS).UTC().Format(timeLayout))
-	b.WriteString(separator)
+	c.value(time.Unix(0, row.TS).UTC().Format(timeLayout))
+	c.gap(separator)
 
 	if showsRaw(row) {
-		b.WriteString(sanitize(row.Raw))
+		c.value(sanitize(row.Raw))
 	} else {
-		m.writeCells(&b, row.Values)
+		m.writeCells(&c, row.Values)
 	}
 
 	// A row that ends in empty cells would otherwise end in spaces.
-	line := strings.TrimRight(b.String(), " ")
-
-	return ansi.Truncate(line, m.width, ellipsis)
+	return strings.TrimRight(c.b.String(), " ")
 }
 
 // writeCells writes the cells of a row. Each is padded to its column's width
 // except the last, which takes whatever the line has left.
-func (m Model) writeCells(b *strings.Builder, values []string) {
+func (m Model) writeCells(c *clip, values []string) {
 	for i, value := range values {
 		value = sanitize(value)
 
 		if i == len(values)-1 {
-			b.WriteString(value)
+			c.value(value)
 			return
 		}
 
@@ -195,10 +193,42 @@ func (m Model) writeCells(b *strings.Builder, values []string) {
 		width := min(m.widths[i], limit)
 		cell := ansi.Truncate(value, width, ellipsis)
 
-		b.WriteString(cell)
-		b.WriteString(strings.Repeat(" ", width-ansi.StringWidth(cell)))
-		b.WriteString(separator)
+		c.value(cell)
+		c.gap(strings.Repeat(" ", width-ansi.StringWidth(cell)) + separator)
 	}
+}
+
+// clip writes a line of at most left more cells. Only a value cut short gets
+// an ellipsis, so one shows that something is hidden. The line can end in a
+// gap, or at the edge of a value that fits, and shows none.
+type clip struct {
+	b    strings.Builder
+	left int
+}
+
+// value writes s, or the start of it with an ellipsis if it doesn't fit.
+func (c *clip) value(s string) {
+	c.write(s, ellipsis)
+}
+
+// gap writes padding or a separator, or the start of it if it doesn't fit.
+func (c *clip) gap(s string) {
+	c.write(s, "")
+}
+
+func (c *clip) write(s, tail string) {
+	if c.left <= 0 {
+		return
+	}
+
+	width := ansi.StringWidth(s)
+	if width > c.left {
+		s = ansi.Truncate(s, c.left, tail)
+		width = c.left
+	}
+
+	c.b.WriteString(s)
+	c.left -= width
 }
 
 // sanitize makes s safe to print. Control characters, ESC included, become

@@ -188,6 +188,47 @@ func TestModel(t *testing.T) {
 			require.Equal(t, len(stamp)+10, ansi.StringWidth(view))
 		})
 
+		t.Run(
+			"has no ellipsis when the cut falls in a gap",
+			func(t *testing.T) {
+				rows := cellRows([]string{"ab", "cd", "ef"})
+
+				// The first column ends at len(stamp)+2, then comes its separator.
+				for _, extra := range []int{2, 3} {
+					m := New().SetSize(len(stamp)+extra, 1).SetRows(rows)
+
+					require.Equal(
+						t,
+						stamp+"ab",
+						strings.TrimRight(m.View(), " "),
+					)
+					require.NotContains(t, m.View(), ellipsis)
+				}
+			},
+		)
+
+		t.Run(
+			"has no ellipsis when the last visible value fits",
+			func(t *testing.T) {
+				m := New().SetSize(len(stamp)+5, 1).SetRows(cellRows(
+					[]string{"ab", "cd", "ef"},
+				))
+
+				require.Equal(t, stamp+"ab cd", m.View())
+			},
+		)
+
+		t.Run(
+			"has an ellipsis when a middle column is cut",
+			func(t *testing.T) {
+				m := New().SetSize(len(stamp)+4, 1).SetRows(cellRows(
+					[]string{"ab", "cdef", "gh"},
+				))
+
+				require.Equal(t, stamp+"ab …", m.View())
+			},
+		)
+
 		t.Run("cuts lines to the width", func(t *testing.T) {
 			m := New().SetSize(len(stamp)+8, 1).SetRows(rawRows("0123456789"))
 
