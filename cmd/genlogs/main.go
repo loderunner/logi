@@ -19,12 +19,23 @@ func main() {
 	)
 	flag.Parse()
 
-	startTime, err := time.Parse(time.RFC3339Nano, *start)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "invalid start time")
+	var startTime time.Time
+	if *start != "" {
+		var err error
+
+		startTime, err = time.Parse(time.RFC3339Nano, *start)
+		if err != nil {
+			fmt.Fprintf(
+				os.Stderr,
+				"genlogs: invalid start time %q: %v\n",
+				*start,
+				err,
+			)
+			os.Exit(1)
+		}
 	}
 
-	err = write(os.Stdout, options{
+	err := write(os.Stdout, options{
 		Size:  int64(*sizeMB) << 20,
 		Seed:  *seed,
 		Start: startTime,
