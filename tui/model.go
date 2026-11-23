@@ -210,7 +210,7 @@ func (m Model) addKeys(newKeys []string) Model {
 	}
 
 	m.keys = keys
-	m.table = m.table.ResetWidths()
+	m.table = m.table.SetMessageColumn(messageIndex(keys)).ResetWidths()
 
 	return m
 }

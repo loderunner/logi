@@ -79,7 +79,7 @@ func TestModel(t *testing.T) {
 			m, cmd := update(t, m, size)
 			cmd()
 
-			// Keys that aren't level or message leave the default.
+			// Until a level or message appears, keys show in order of appearance.
 			m, cmd = update(
 				t,
 				m,
@@ -103,9 +103,9 @@ func TestModel(t *testing.T) {
 
 			// The Cmd's keys don't change when the model's do.
 			require.Equal(t, [][]string{
-				{"_raw"}, {"_raw"}, {"Msg"}, {"LVL", "Msg"},
+				{"_raw"}, {"a"}, {"Msg", "a", "b"}, {"LVL", "Msg", "a", "b"},
 			}, asked)
-			require.Equal(t, []string{"LVL", "Msg"}, m.keys)
+			require.Equal(t, []string{"LVL", "Msg", "a", "b"}, m.keys)
 			require.Equal(t, []string{"a", "Msg", "b", "LVL"}, m.known)
 		})
 
