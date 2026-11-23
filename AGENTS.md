@@ -42,7 +42,7 @@ Before calling a change done, run `task generate fmt lint test build`.
 
 ## Mindset
 
-Work like a pragmatic programmer: take responsibility for the outcome, not just
+Work like a Pragmatic Programmer: take responsibility for the outcome, not just
 the diff. If something is wrong, fix it or say so, and do not hide behind "it
 was already like that". Do not live with broken windows: a bad name, a stale
 comment or a failing test left in place invites more decay, so repair small
