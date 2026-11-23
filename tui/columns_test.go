@@ -13,10 +13,12 @@ func TestDefaultKeys(t *testing.T) {
 		want  []string
 	}{
 		{"nothing known", nil, []string{"_raw"}},
+		{"only the raw line known", []string{"_raw"}, []string{"_raw"}},
+		{"no level or message", []string{"a", "b"}, []string{"a", "b"}},
 		{
-			"no level or message",
-			[]string{"a", "b", "_raw"},
-			[]string{"a", "b", "_raw"},
+			"the raw line isn't a column next to other keys",
+			[]string{"_raw", "level", "a", "msg"},
+			[]string{"level", "msg", "a"},
 		},
 		{
 			"level and message",
