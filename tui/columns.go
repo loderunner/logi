@@ -18,9 +18,13 @@ var (
 
 // defaultKeys returns the keys of the columns after the timestamp: the level
 // key and the message key, when found among known, then every other known key
-// in order of appearance. It returns the key of the raw line when nothing is
-// known yet.
+// in order of appearance. The raw line isn't a column, because the table shows
+// it across a row with no value in any column. When no other key is known, the
+// raw line is the only column.
 func defaultKeys(known []string) []string {
+	known = slices.DeleteFunc(slices.Clone(known), func(key string) bool {
+		return key == ingest.RawKey
+	})
 	if len(known) == 0 {
 		return []string{ingest.RawKey}
 	}
