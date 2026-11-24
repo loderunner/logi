@@ -41,6 +41,7 @@ tasks:
     desc: Build the binaries into bin/
     cmds:
       - go build -trimpath -o bin/logi .
+      - go build -trimpath -o bin/genlogs ./cmd/genlogs
 
   run:
     desc: Run logi

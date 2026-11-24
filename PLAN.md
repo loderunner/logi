@@ -289,7 +289,7 @@ the same ingest path for both:
 | `kql/` | Filter parser, AST, and compiling to a `logstore` filter. |
 | `tui/` | Root model: layout, focus, key map, status bar. |
 | `tui/table/`, `tui/histogram/`, `tui/filterbar/`, `tui/picker/`, `tui/detail/` | One package per pane. |
-| `cmd/genlogs/` | Synthetic log generator, for tests and manual runs. |
+| `cmd/genlogs/` | Synthetic log generator: streams like `tail -f` by default, writes a sized batch with `-size-mb`. For manual runs. |
 
 ## Deliverables
 
@@ -297,7 +297,15 @@ Each deliverable ends with you running logi and seeing something new. Make
 test input with:
 
 ```bash
+# A 50 MiB file, written as fast as possible.
 go run ./cmd/genlogs -size-mb 50 > /tmp/app.log
+
+# A trickle of about 5 lines per second until Ctrl-C, like `tail -f`. Append
+# it to a file that logi follows, or pipe it in. `-rate` changes the speed,
+# and `-start-time` sets the first timestamp, with the clock running in real
+# time from there.
+go run ./cmd/genlogs >> /tmp/app.log
+go run ./cmd/genlogs | logi
 ```
 
 The engine deliverables (E1–E4) are larger. After them, each deliverable is

@@ -8,6 +8,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json/v2"
 	"fmt"
 	"io"
@@ -17,16 +18,21 @@ import (
 	"uuid"
 )
 
-// options controls what Write produces.
+// options controls what write and stream produce.
 type options struct {
-	// Size is the approximate number of bytes to write. Write stops at the
+	// Size is the approximate number of bytes write produces. It stops at the
 	// first line boundary past Size.
 	Size int64
-	// Seed makes the output deterministic, except for request IDs.
+	// Seed makes the output deterministic, except for request IDs and, in
+	// stream, the timestamps.
 	Seed uint64
-	// Start is the timestamp of the first line. The zero value means
-	// 2026-11-20T00:00:00Z.
+	// Start is the timestamp of the first line. The zero value means the
+	// current time. write advances it by simulated gaps. stream fixes the
+	// offset between Start and the current time when it begins, and keeps that
+	// offset as the real clock runs.
 	Start time.Time
+	// Rate is the average number of lines per second stream produces.
+	Rate float64
 }
 
 type httpInfo struct {
@@ -110,45 +116,63 @@ var (
 	}
 )
 
-// write writes synthetic log lines to w until about opts.Size bytes have
-// been written.
-func write(w io.Writer, opts options) error {
-	r := rand.New(rand.NewPCG(opts.Seed, opts.Seed^0x9e3779b97f4a7c15))
-	bw := bufio.NewWriterSize(w, 1<<20)
-	t := opts.Start
-	if t.IsZero() {
-		t = time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)
+// generator produces log lines. A line's timestamp comes from the caller, so
+// write can simulate a clock and stream can use the real one.
+type generator struct {
+	r     *rand.Rand
+	stack string
+}
+
+func newGenerator(seed uint64) *generator {
+	return &generator{
+		r:     rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
+		stack: strings.Repeat("at handler.go:42\\n", 12),
+	}
+}
+
+// line returns one newline-terminated line stamped about t. About 0.1% of the
+// lines are plain text instead of JSON.
+func (g *generator) line(t time.Time) ([]byte, error) {
+	if g.r.IntN(1000) == 0 {
+		return fmt.Appendf(
+			nil,
+			"panic: runtime error at %s\n",
+			t.Format(time.RFC3339Nano),
+		), nil
 	}
 
-	stack := strings.Repeat("at handler.go:42\\n", 12)
+	b, err := json.Marshal(makeEntry(g.r, t, g.stack))
+	if err != nil {
+		return nil, fmt.Errorf("marshal entry: %w", err)
+	}
+
+	return append(b, '\n'), nil
+}
+
+// write writes synthetic log lines to w, as fast as it can, until about
+// opts.Size bytes have been written. The timestamps advance by a random few
+// milliseconds per line, starting at opts.Start.
+func write(w io.Writer, opts options) error {
+	g := newGenerator(opts.Seed)
+	bw := bufio.NewWriterSize(w, 1<<20)
+
+	t := opts.Start
+	if t.IsZero() {
+		t = time.Now().UTC()
+	}
 
 	var written int64
 	for written < opts.Size {
-		t = t.Add(time.Duration(r.IntN(40_000)) * time.Microsecond)
+		t = t.Add(time.Duration(g.r.IntN(40_000)) * time.Microsecond)
 
-		if r.IntN(1000) == 0 {
-			n, err := fmt.Fprintf(
-				bw,
-				"panic: runtime error at %s\n",
-				t.Format(time.RFC3339Nano),
-			)
-			if err != nil {
-				return fmt.Errorf("write plain line: %w", err)
-			}
-
-			written += int64(n)
-			continue
-		}
-
-		b, err := json.Marshal(makeEntry(r, t, stack))
+		b, err := g.line(t)
 		if err != nil {
-			return fmt.Errorf("marshal entry: %w", err)
+			return err
 		}
 
-		b = append(b, '\n')
 		n, err := bw.Write(b)
 		if err != nil {
-			return fmt.Errorf("write entry: %w", err)
+			return fmt.Errorf("write line: %w", err)
 		}
 
 		written += int64(n)
@@ -160,6 +184,42 @@ func write(w io.Writer, opts options) error {
 	}
 
 	return nil
+}
+
+// stream writes one line at a time to w until ctx is done. Each line is stamped
+// with the current time plus a fixed offset, which is zero unless opts.Start is
+// set. The gaps between lines are exponentially distributed around 1/opts.Rate
+// seconds, so the output is bursty like a real service. It does not buffer, so
+// a reader sees each line as soon as it is written.
+func stream(ctx context.Context, w io.Writer, opts options) error {
+	g := newGenerator(opts.Seed)
+
+	var offset time.Duration
+	if !opts.Start.IsZero() {
+		offset = time.Until(opts.Start)
+	}
+
+	for {
+		gap := time.Duration(
+			g.r.ExpFloat64() / opts.Rate * float64(time.Second),
+		)
+
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(gap):
+		}
+
+		b, err := g.line(time.Now().Add(offset).UTC())
+		if err != nil {
+			return err
+		}
+
+		_, err = w.Write(b)
+		if err != nil {
+			return fmt.Errorf("write line: %w", err)
+		}
+	}
 }
 
 func makeEntry(r *rand.Rand, t time.Time, stack string) entry {
