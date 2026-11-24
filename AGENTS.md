@@ -79,6 +79,10 @@ and can be improved beats a perfect one that does not.
 
 - Before writing, editing or reviewing any `.go` file, invoke the
   `loderunner:go-conventions` skill and follow it.
+- After adding or upgrading a dependency, read its documentation and source at
+  the version in `go.mod` before you use it, instead of working from memory:
+  APIs change between versions. `go doc <pkg>` and the module cache
+  (`go env GOMODCACHE`) hold the exact code you build against.
 - **bubbletea models** use value receivers and shallow copies of the model by
   default. Clone at the boundaries: when a slice or map leaves `Update`
   inside a `tea.Cmd` closure, and when two owners would otherwise share a

@@ -1,5 +1,6 @@
 // Command logi is a terminal UI for JSONL logs. It reads a file, or stdin
-// when there is no argument. With -f it keeps reading as the file grows.
+// when there is no argument. With -f or --follow it keeps reading as the file
+// grows.
 //
 //	logi app.log
 //	logi -f app.log
@@ -9,13 +10,13 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/term"
+	"github.com/spf13/pflag"
 
 	"github.com/loderunner/logi/ingest"
 	"github.com/loderunner/logi/logstore"
@@ -23,10 +24,6 @@ import (
 )
 
 const (
-	usage = "usage: logi [-f] [file]\n" +
-		"With no file, logi reads standard input.\n" +
-		"  -f  keep reading as the file grows\n"
-
 	// memoryLimit is DuckDB's memory limit.
 	memoryLimit = "1GB"
 	// lineBuffer is the capacity of the channel from the reader to ingest.
@@ -38,13 +35,18 @@ func main() {
 }
 
 func run() int {
-	cfg, ok := parseArgs(os.Args[1:])
-	if !ok {
-		fmt.Fprint(os.Stderr, usage)
+	cfg, err := parseArgs(os.Args[1:])
+	if errors.Is(err, pflag.ErrHelp) {
+		fmt.Fprint(os.Stderr, usage())
+		return 0
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "logi: %v\n\n%s", err, usage())
 		return 2
 	}
 
-	err := start(cfg)
+	err = start(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "logi:", err)
 		return 1
@@ -61,33 +63,61 @@ type config struct {
 	follow bool
 }
 
-// parseArgs reads the command line. It reports false when the arguments are
-// wrong, including -f without a file: stdin is always read to its end.
-func parseArgs(args []string) (config, bool) {
-	flags := flag.NewFlagSet("logi", flag.ContinueOnError)
+// newFlags returns the flag set that writes into cfg. It is the one place that
+// declares flags, so the usage can't drift from what parseArgs accepts.
+//
+// Flags stop at the first argument that isn't a flag, so "logi app.log -f" is
+// an error instead of a surprise. pflag's own error printing is off: run
+// decides what to print and where.
+func newFlags(cfg *config) *pflag.FlagSet {
+	flags := pflag.NewFlagSet("logi", pflag.ContinueOnError)
+	flags.SetInterspersed(false)
 	flags.SetOutput(io.Discard)
+	flags.BoolVarP(
+		&cfg.follow, "follow", "f", false, "keep reading as the file grows",
+	)
 
+	return flags
+}
+
+// usage describes the command line, with the flags listed by pflag.
+func usage() string {
+	return "usage: logi [flags] [file]\n" +
+		"With no file, logi reads standard input.\n\n" +
+		newFlags(&config{}).FlagUsages()
+}
+
+// parseArgs reads the command line. It returns pflag.ErrHelp when help is
+// requested, and another error when the arguments are wrong, including -f
+// without a file: stdin is always read to its end.
+func parseArgs(args []string) (config, error) {
 	var cfg config
 
-	flags.BoolVar(&cfg.follow, "f", false, "")
+	flags := newFlags(&cfg)
 
 	err := flags.Parse(args)
 	if err != nil {
-		return config{}, false
+		return config{}, err
 	}
 
 	switch flags.NArg() {
 	case 0:
-		if cfg.follow || term.IsTerminal(os.Stdin.Fd()) {
-			return config{}, false
+		if cfg.follow {
+			return config{}, errors.New("--follow needs a file")
 		}
 
-		return cfg, true
+		if term.IsTerminal(os.Stdin.Fd()) {
+			return config{}, errors.New("no file, and stdin is a terminal")
+		}
+
+		return cfg, nil
 	case 1:
 		cfg.path = flags.Arg(0)
-		return cfg, true
+		return cfg, nil
 	default:
-		return config{}, false
+		return config{}, fmt.Errorf(
+			"expected at most one file, got %d", flags.NArg(),
+		)
 	}
 }
 

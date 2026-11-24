@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/x/term v0.2.2
 	github.com/duckdb/duckdb-go/v2 v2.20000.0
 	github.com/fsnotify/fsnotify v1.10.1
+	github.com/spf13/pflag v1.1.0
 	github.com/stretchr/testify v1.12.1
 	go.uber.org/mock v0.6.0
 	golang.org/x/text v0.44.0
