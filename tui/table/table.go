@@ -192,7 +192,7 @@ func (m Model) writeCells(c *clip, values []string) {
 		value = sanitize(value)
 
 		if i == len(values)-1 {
-			c.value(m.colored(i, value, value))
+			c.value(m.renderCell(i, value, value))
 			return
 		}
 
@@ -208,14 +208,14 @@ func (m Model) writeCells(c *clip, values []string) {
 
 		// The color is chosen from the whole value, because a cut one such as
 		// "wa…" no longer names its level. It covers the text, not the padding.
-		c.value(m.colored(i, value, cell))
+		c.value(m.renderCell(i, value, cell))
 		c.gap(padding + separator)
 	}
 }
 
-// colored returns text colored by the log level that value names, when column
+// renderCell returns text colored by the log level that value names, when column
 // i is the level column and the level is known. Otherwise it returns text.
-func (m Model) colored(i int, value, text string) string {
+func (m Model) renderCell(i int, value, text string) string {
 	if i != m.level || text == "" {
 		return text
 	}
