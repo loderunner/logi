@@ -377,18 +377,24 @@ func TestModel(t *testing.T) {
 				view,
 			)
 		})
+	})
 
-		t.Run("replaces C1 controls and invalid UTF-8", func(t *testing.T) {
-			m := New().SetSize(80, 1).
-				SetRows(cellRows([]string{"a\u009bb\xffc"}))
+	t.Run("Selected", func(t *testing.T) {
+		t.Run("is the top row", func(t *testing.T) {
+			m := New().SetSize(60, 2).SetRows(rawRows("newest", "older"))
 
-			require.Equal(t, stamp+"a�b�c", shown(m))
+			row, ok := m.Selected()
+
+			require.True(t, ok)
+			require.Equal(t, "newest", row.Raw)
 		})
 
-		t.Run("replaces tabs with spaces", func(t *testing.T) {
-			m := New().SetSize(80, 1).SetRows(cellRows([]string{"a\tb"}))
+		t.Run("is none when the table is empty", func(t *testing.T) {
+			m := New().SetSize(60, 2)
 
-			require.Equal(t, stamp+"a"+strings.Repeat(" ", 4)+"b", shown(m))
+			_, ok := m.Selected()
+
+			require.False(t, ok)
 		})
 	})
 

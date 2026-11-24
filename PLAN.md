@@ -235,8 +235,8 @@ the same ingest path for both:
     becomes `›` when columns are hidden on the right. That tells a cut-off
     column apart from a value cut with `…`.
   - A newline in a value shows as `↵`.
-- **Detail pane.** Enter on a row opens its pretty-printed JSON. Esc closes
-  it.
+- **Detail pane.** Enter opens the selected row's pretty-printed JSON in
+  place of the table. Long lines wrap. Esc closes it.
 - **Column picker**
   - `c` opens it, with type-to-narrow search over all known keys except
     `_raw`. Space toggles an entry. The timestamp isn't an entry, because it
