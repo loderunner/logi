@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	// ellipsis ends a value that was cut short.
 	ellipsis = "…"
 	// tabWidth is how many spaces replace a tab.
 	tabWidth = 4
@@ -19,12 +20,12 @@ const (
 	timeLayout = "2006-01-02 15:04:05.000"
 	// separator goes between columns.
 	separator = " "
-	// maxColumnShare caps a column that isn't the last at this fraction of
+	// maxColumnShare caps a column that isn't the last at 1/maxColumnShare of
 	// the pane, so one long value can't push the others off screen.
 	maxColumnShare = 4
 	// minMessageCap is the least the message column's cap can be. The message
-	// is the column you read, so a narrow pane doesn't squeeze it down to a
-	// quarter of the pane like the others.
+	// is the column you read, so a narrow pane doesn't squeeze it down to
+	// 1/maxColumnShare of the pane like the others.
 	minMessageCap = 40
 )
 
@@ -38,8 +39,9 @@ type Model struct {
 	rows          []logstore.Row
 	width, height int
 
-	// widths[i] is the widest cell shown so far in column i. It only grows,
-	// so a column doesn't jump when a short value follows a long one.
+	// widths[i] is the widest cell shown so far in column i. It only grows
+	// until ResetWidths, so a column doesn't jump when a short value follows a
+	// long one.
 	widths []int
 
 	// message and level are the indexes of the message and level columns, or
@@ -56,8 +58,8 @@ func New() Model {
 }
 
 // SetMessageColumn returns the table treating column i as the message column,
-// which has a floor on its cap. Pass a negative i for none. Call
-// ResetWidths after it, because the widths depend on the caps.
+// which can take more than 1/maxColumnShare of the pane, down to
+// minMessageCap cells. Pass a negative i for none.
 func (m Model) SetMessageColumn(i int) Model {
 	if i < 0 {
 		i = noColumn
@@ -213,8 +215,9 @@ func (m Model) writeCells(c *clip, values []string) {
 	}
 }
 
-// renderCell returns text colored by the log level that value names, when column
-// i is the level column and the level is known. Otherwise it returns text.
+// renderCell returns text colored by the log level that value names, when
+// column i is the level column and the level is known. Otherwise it returns
+// text.
 func (m Model) renderCell(i int, value, text string) string {
 	if i != m.level || text == "" {
 		return text
@@ -232,7 +235,8 @@ func (m Model) renderCell(i int, value, text string) string {
 // an ellipsis, so one shows that something is hidden. The line can end in a
 // gap, or at the edge of a value that fits, and shows none.
 type clip struct {
-	b    strings.Builder
+	b strings.Builder
+	// left is the number of cells the line still has room for.
 	left int
 }
 
@@ -246,6 +250,7 @@ func (c *clip) gap(s string) {
 	c.write(s, "")
 }
 
+// write writes s, or the start of it ending in tail if it doesn't fit.
 func (c *clip) write(s, tail string) {
 	if c.left <= 0 {
 		return

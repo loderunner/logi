@@ -10,8 +10,11 @@ import (
 
 // Row is one stored log line.
 type Row struct {
-	ID  int64
-	TS  time.Time
+	// ID is the id that Append stored with the row.
+	ID int64
+	// TS is the time that Append stored with the row, in UTC.
+	TS time.Time
+	// Raw is the line as read.
 	Raw string
 	// Values holds the value of each key passed to Page, in the same order.
 	// A key the row has no value for, or the store has never seen, has "".
@@ -49,16 +52,17 @@ type Page struct {
 	// From is the top row of the page after the move, or nil when it is the
 	// newest row.
 	From *Key
-	// Rows has one value per key in the query, in each row.
+	// Rows are the rows of the page, newest first. Each has one value per key
+	// in the query.
 	Rows []Row
 }
 
 // Page moves q.From by q.Move rows and returns up to q.Limit rows starting at
 // the result.
 //
-// A move to older rows stops while the page is still full, so the oldest row
-// can't rise above the bottom line. A move to newer rows that reaches or
-// passes the newest row returns a nil From.
+// A move to older rows stops while the page is still full, so the page keeps
+// q.Limit rows when the store has that many. A move to newer rows that
+// reaches or passes the newest row returns a nil From.
 //
 // The page is read after the move, in a separate query, so rows that arrive
 // in between can show in a page that follows the newest row.
@@ -97,7 +101,7 @@ func (s *Store) move(
 }
 
 // moveOlder moves from n rows to older rows, but not so far that fewer than
-// limit rows are left from the result down.
+// limit rows remain at and below the result.
 func (s *Store) moveOlder(
 	ctx context.Context,
 	from *Key,
@@ -196,8 +200,8 @@ func keyFilter(k *Key, op string) (string, []any) {
 	ts := k.TS.UnixNano()
 	strict := strings.TrimSuffix(op, "=")
 
-	// Spelling out the comparison instead of a row value (ts, id) <= (?, ?)
-	// is ~3x faster
+	// Spelling out the comparison is about 3x faster than comparing the row
+	// value, as in (ts, id) <= (?, ?).
 	return fmt.Sprintf(
 			" WHERE ts %s ? OR (ts = ? AND id %s ?)",
 			strict,
@@ -221,6 +225,8 @@ func (s *Store) rowsFrom(
 	s.mu.RLock()
 
 	for _, key := range keys {
+		// A key with no column has no value in any row. The column name is
+		// generated, so it needs no escaping beyond the quotes.
 		name, ok := s.columns[key]
 		if ok {
 			fmt.Fprintf(&query, `, COALESCE("%s", '')`, name)

@@ -9,8 +9,11 @@ import (
 )
 
 const (
+	// dirPattern is the name pattern of every directory that newPrivateDir
+	// creates, which is also what cleanStale looks for.
 	dirPattern = "logi-*"
-	lockName   = "lock"
+	// lockName is the lock file in each private directory.
+	lockName = "lock"
 
 	// orphanAge is how old a directory with no lock file must be before
 	// cleanStale removes it. A younger one may belong to a logi that has
@@ -31,6 +34,7 @@ type privateDir struct {
 }
 
 // newPrivateDir creates a directory under root, with mode 0700, and locks it.
+// Close removes it.
 func newPrivateDir(root string) (*privateDir, error) {
 	path, err := os.MkdirTemp(root, dirPattern)
 	if err != nil {
@@ -89,6 +93,9 @@ func cleanStale(root string) error {
 	return nil
 }
 
+// removeIfStale removes the directory at path unless a running logi holds its
+// lock. A directory with no lock file is left alone until it is older than
+// orphanAge.
 func removeIfStale(path string) {
 	lock, err := os.OpenFile(filepath.Join(path, lockName), os.O_RDWR, 0)
 	if os.IsNotExist(err) {
@@ -100,6 +107,7 @@ func removeIfStale(path string) {
 		return
 	}
 	if err != nil {
+		// Not ours to inspect, such as a directory that another user owns.
 		return
 	}
 	defer func() { _ = lock.Close() }()
@@ -110,6 +118,7 @@ func removeIfStale(path string) {
 		return
 	}
 
-	// Remove the directory while holding the lock.
+	// Remove the directory while holding the lock, so that two logi starting
+	// together don't both clean it.
 	_ = os.RemoveAll(path)
 }

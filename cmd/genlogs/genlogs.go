@@ -1,9 +1,3 @@
-// Package genlogs writes synthetic JSONL application logs, for tests and for
-// trying logi on realistic input.
-//
-// The output has nested objects, an array field, keys that appear on only
-// some lines, about 2% out-of-order timestamps and about 0.1% lines that
-// aren't JSON.
 package main
 
 import (
@@ -35,6 +29,8 @@ type options struct {
 	Rate float64
 }
 
+// The info types and entry are the shape of one JSON log line. Their json tags
+// are the keys.
 type httpInfo struct {
 	Method    string  `json:"method"`
 	Path      string  `json:"path"`
@@ -75,6 +71,8 @@ type entry struct {
 	Tags      []string  `json:"tags,omitzero"`
 }
 
+// The tables that makeEntry and makeMsg pick from. A value that is repeated
+// is picked more often, which skews the output the way real traffic is skewed.
 var (
 	services = []string{
 		"api", "billing", "auth", "search", "checkout", "inventory",
@@ -123,6 +121,7 @@ type generator struct {
 	stack string
 }
 
+// newGenerator returns a generator whose choices follow seed.
 func newGenerator(seed uint64) *generator {
 	return &generator{
 		r:     rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
@@ -130,8 +129,9 @@ func newGenerator(seed uint64) *generator {
 	}
 }
 
-// line returns one newline-terminated line stamped about t. About 0.1% of the
-// lines are plain text instead of JSON.
+// line returns one newline-terminated line stamped t, except that about 2% of
+// the JSON lines are stamped up to five seconds earlier, to arrive out of
+// order. About 0.1% of the lines are plain text instead of JSON.
 func (g *generator) line(t time.Time) ([]byte, error) {
 	if g.r.IntN(1000) == 0 {
 		return fmt.Appendf(
@@ -150,8 +150,8 @@ func (g *generator) line(t time.Time) ([]byte, error) {
 }
 
 // write writes synthetic log lines to w, as fast as it can, until about
-// opts.Size bytes have been written. The timestamps advance by a random few
-// milliseconds per line, starting at opts.Start.
+// opts.Size bytes have been written. The timestamps start at opts.Start and
+// advance by a random gap of up to 40 ms per line.
 func write(w io.Writer, opts options) error {
 	g := newGenerator(opts.Seed)
 	bw := bufio.NewWriterSize(w, 1<<20)
@@ -222,6 +222,8 @@ func stream(ctx context.Context, w io.Writer, opts options) error {
 	}
 }
 
+// makeEntry returns the entry for a line at t. Each optional group of fields
+// appears with its own probability, so that some keys are on only some lines.
 func makeEntry(r *rand.Rand, t time.Time, stack string) entry {
 	ts := t
 	if r.IntN(50) == 0 {
@@ -294,6 +296,8 @@ func makeEntry(r *rand.Rand, t time.Time, stack string) entry {
 	return e
 }
 
+// makeMsg returns a message from msgs with its verbs filled in: a key for %s,
+// a number for any other verb.
 func makeMsg(r *rand.Rand) string {
 	m := msgs[r.IntN(len(msgs))]
 	n := strings.Count(m, "%")

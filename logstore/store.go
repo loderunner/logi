@@ -34,15 +34,17 @@ type Store struct {
 	db  *sql.DB
 	dir *privateDir
 
-	// columns maps each key to its column name. The Writer adds a key only
-	// after the ALTER TABLE that creates its column has committed, so a query
-	// never names a column that doesn't exist yet.
+	// mu guards columns, which maps each key to its column name. The Writer
+	// adds a key only after the ALTER TABLE that creates its column has
+	// committed, so a query never names a column that doesn't exist yet.
 	mu      sync.RWMutex
 	columns map[string]string
 }
 
 // Open removes the temporary directories that crashed runs left behind,
-// creates a private one for this run, and opens an empty database.
+// creates a private one for this run, and opens an empty database. Open
+// doesn't check opts.MemoryLimit: DuckDB rejects a bad value, and Open returns
+// that error.
 func Open(ctx context.Context, opts Options) (*Store, error) {
 	root := os.TempDir()
 
@@ -70,14 +72,14 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 	db := sql.OpenDB(connector)
 
 	// The connector runs configure on the first connection, so Ping is where
-	// a bad memory limit fails, under a message that names the setting
-	// instead of the table.
+	// a bad memory limit fails. configure's error names the setting, which
+	// the person who chose it recognizes: "open duckdb" would only bury it.
 	err = db.PingContext(ctx)
 	if err != nil {
 		_ = db.Close()
 		_ = dir.Close()
 
-		return nil, fmt.Errorf("open duckdb: %w", err)
+		return nil, err
 	}
 
 	_, err = db.ExecContext(
@@ -103,23 +105,26 @@ func (s *Store) Close() error {
 	return errors.Join(dbErr, dirErr)
 }
 
-// configure runs on each new connection.
+// configure applies the settings that every connection needs. The connector
+// calls it for each new connection.
 func configure(
 	ctx context.Context,
 	execer driver.ExecerContext,
 	memoryLimit, tempDir string,
 ) error {
-	settings := []struct{ name, value string }{
-		{"memory_limit", quote(memoryLimit)},
-		{"temp_directory", quote(tempDir)},
+	// label names the setting in an error, in words that the person who chose
+	// the value recognizes.
+	settings := []struct{ name, label, value string }{
+		{"memory_limit", "memory limit", memoryLimit},
+		{"temp_directory", "temporary directory", tempDir},
 	}
 
 	for _, s := range settings {
-		stmt := fmt.Sprintf("SET %s = %s", s.name, s.value)
+		stmt := fmt.Sprintf("SET %s = %s", s.name, quote(s.value))
 
 		_, err := execer.ExecContext(ctx, stmt, nil)
 		if err != nil {
-			return fmt.Errorf("set %s: %w", s.name, err)
+			return fmt.Errorf("invalid %s %q: %w", s.label, s.value, err)
 		}
 	}
 

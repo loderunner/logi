@@ -1,5 +1,5 @@
-// Package ingest reads log lines from a file or a stream and appends them to
-// the store.
+// Package ingest reads log lines from a file or a stream, flattens each into
+// fields, gives it a time and appends it to the store.
 package ingest
 
 import (
@@ -69,6 +69,7 @@ func (lr *lineReader) flushPartial() (Line, bool) {
 	return Line{Text: trimEOL(text), End: lr.offset}, true
 }
 
+// trimEOL removes one trailing "\n" or "\r\n".
 func trimEOL(b []byte) []byte {
 	b = bytes.TrimSuffix(b, []byte("\n"))
 	return bytes.TrimSuffix(b, []byte("\r"))
@@ -114,12 +115,12 @@ func ReadAll(ctx context.Context, r io.Reader, out chan<- Line) error {
 	}
 }
 
-// ReadFollow sends the lines of f on out, from its current position, then keeps
-// sending lines as they are appended until ctx ends. It then closes out and
-// returns nil. Rotation and truncation aren't handled.
+// ReadFollow sends the lines of f on out, from its current position, then
+// keeps sending lines as they are appended. It returns nil when ctx ends, and
+// closes out on every return. Rotation and truncation aren't handled.
 //
-// ReadFollow waits for writes with fsnotify. It watches f before the first read,
-// so a write between the last read and the wait isn't missed.
+// ReadFollow waits for writes with fsnotify. It watches f before the first
+// read, so a write between the last read and the wait isn't missed.
 func ReadFollow(ctx context.Context, f *os.File, out chan<- Line) error {
 	defer close(out)
 
@@ -169,13 +170,13 @@ func waitForWrite(ctx context.Context, watcher *fsnotify.Watcher) error {
 			return ctx.Err()
 		case err, ok := <-watcher.Errors:
 			if !ok {
-				return errors.New("watcher closed")
+				return errors.New("file watcher closed unexpectedly")
 			}
 
 			return fmt.Errorf("watch: %w", err)
 		case ev, ok := <-watcher.Events:
 			if !ok {
-				return errors.New("watcher closed")
+				return errors.New("file watcher closed unexpectedly")
 			}
 			if ev.Has(fsnotify.Write) {
 				drain(watcher)
@@ -185,6 +186,8 @@ func waitForWrite(ctx context.Context, watcher *fsnotify.Watcher) error {
 	}
 }
 
+// drain discards the events queued for the write that waitForWrite saw. Each
+// would only wake the next wait to find no new lines.
 func drain(watcher *fsnotify.Watcher) {
 	for {
 		select {

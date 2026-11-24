@@ -13,9 +13,9 @@ var timeKeys = []string{"time", "ts", "timestamp", "@timestamp"}
 
 // Magnitude thresholds that guess the unit of a numeric epoch. A value below
 // maxSeconds is in seconds, below maxMillis in milliseconds, and anything
-// else in nanoseconds. Microseconds are deliberately not supported: the
-// ranges of two adjacent units can't overlap, and a guess between them would
-// be wrong for real data.
+// else in nanoseconds. Microseconds are deliberately not supported, because
+// the ranges of adjacent units overlap and a guess between them would be
+// wrong for real data. A microsecond epoch reads as nanoseconds.
 const (
 	maxSeconds = 1e11
 	maxMillis  = 1e14
@@ -166,10 +166,10 @@ func (s *stamper) stamp(
 // is case-sensitive, and the key may be a dotted, flattened one such as
 // "log.time". The value must parse.
 //
-// Without one, it is the first candidate, by priority, with a value that
-// parses. A key that equals the candidate wins over one that matches only
-// without regard to case, and among those the smallest key wins, so that the
-// result doesn't depend on map iteration.
+// Without one, the time field is the first candidate in timeKeys, by
+// priority, whose value parses. A key that equals the candidate wins over one
+// that matches only without regard to case, and among those the smallest key
+// wins, so that the result doesn't depend on map iteration.
 func detectTime(
 	fields map[string]string,
 	field string,

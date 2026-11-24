@@ -112,7 +112,7 @@ func TestStore(t *testing.T) {
 					t.Setenv("TMPDIR", root)
 
 					_, err := Open(t.Context(), Options{MemoryLimit: limit})
-					require.ErrorContains(t, err, "set memory_limit")
+					require.ErrorContains(t, err, "invalid memory limit")
 
 					dirs, err := filepath.Glob(filepath.Join(root, "logi-*"))
 					require.NoError(t, err)
