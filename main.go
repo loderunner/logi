@@ -22,12 +22,8 @@ import (
 	"github.com/loderunner/logi/tui"
 )
 
-const (
-	// memoryLimit is DuckDB's memory limit.
-	memoryLimit = "1GB"
-	// lineBuffer is the capacity of the channel from the reader to ingest.
-	lineBuffer = 4096
-)
+// lineBuffer is the capacity of the channel from the reader to ingest.
+const lineBuffer = 4096
 
 func main() {
 	os.Exit(run())
@@ -79,7 +75,10 @@ func start(cfg config.Config) (err error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	store, err := logstore.Open(ctx, logstore.Options{MemoryLimit: memoryLimit})
+	store, err := logstore.Open(
+		ctx,
+		logstore.Options{MemoryLimit: cfg.MemoryLimit},
+	)
 	if err != nil {
 		return err
 	}

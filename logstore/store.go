@@ -69,6 +69,17 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 
 	db := sql.OpenDB(connector)
 
+	// The connector runs configure on the first connection, so Ping is where
+	// a bad memory limit fails, under a message that names the setting
+	// instead of the table.
+	err = db.PingContext(ctx)
+	if err != nil {
+		_ = db.Close()
+		_ = dir.Close()
+
+		return nil, fmt.Errorf("open duckdb: %w", err)
+	}
+
 	_, err = db.ExecContext(
 		ctx,
 		"CREATE TABLE logs(id BIGINT, ts BIGINT, raw VARCHAR, vals VARCHAR)",

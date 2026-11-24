@@ -57,20 +57,20 @@ func TestLoadArgs(t *testing.T) {
 		{
 			"a file is read once",
 			[]string{"app.log"},
-			config.Config{LogFile: "app.log"},
+			config.Config{LogFile: "app.log", MemoryLimit: "1GB"},
 			nil,
 		},
-		{"no file is stdin", nil, config.Config{}, nil},
+		{"no file is stdin", nil, config.Config{MemoryLimit: "1GB"}, nil},
 		{
 			"-f follows the file",
 			[]string{"-f", "app.log"},
-			config.Config{LogFile: "app.log", Follow: true},
+			config.Config{LogFile: "app.log", Follow: true, MemoryLimit: "1GB"},
 			nil,
 		},
 		{
 			"--follow follows the file",
 			[]string{"--follow", "app.log"},
-			config.Config{LogFile: "app.log", Follow: true},
+			config.Config{LogFile: "app.log", Follow: true, MemoryLimit: "1GB"},
 			nil,
 		},
 		{
@@ -383,6 +383,98 @@ func TestLoadTimeField(t *testing.T) {
 	})
 }
 
+func TestLoadMemoryLimit(t *testing.T) {
+	// setup makes every source name a different value, and returns the
+	// --config path. The implicit file is in XDG_CONFIG_HOME.
+	setup := func(t *testing.T) (explicit string) {
+		t.Helper()
+
+		xdg := isolate(t)
+
+		writeFile(t, xdg, "logi/config.json", `{"memory-limit": "3GB"}`)
+		t.Setenv("LOGI_MEMORY_LIMIT", "2GB")
+
+		return writeFile(t, t.TempDir(), "c.json", `{"memory-limit": "4GB"}`)
+	}
+
+	t.Run("the default is 1GB", func(t *testing.T) {
+		isolate(t)
+
+		got, err := config.Load([]string{"app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "1GB", got.MemoryLimit)
+	})
+
+	t.Run("the flag beats everything", func(t *testing.T) {
+		explicit := setup(t)
+
+		got, err := config.Load(
+			[]string{
+				"--config",
+				explicit,
+				"--memory-limit",
+				"512MB",
+				"app.log",
+			},
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, "512MB", got.MemoryLimit)
+	})
+
+	t.Run("the environment beats the files", func(t *testing.T) {
+		explicit := setup(t)
+
+		got, err := config.Load([]string{"--config", explicit, "app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "2GB", got.MemoryLimit)
+	})
+
+	t.Run("an explicit file beats the implicit one", func(t *testing.T) {
+		explicit := setup(t)
+		t.Setenv("LOGI_MEMORY_LIMIT", "")
+
+		got, err := config.Load([]string{"--config", explicit, "app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "4GB", got.MemoryLimit)
+	})
+
+	t.Run("an explicit file hides the implicit one", func(t *testing.T) {
+		xdg := isolate(t)
+
+		writeFile(t, xdg, "logi/config.json", `{"memory-limit": "3GB"}`)
+
+		explicit := writeFile(t, t.TempDir(), "c.json", `{}`)
+
+		got, err := config.Load([]string{"--config", explicit, "app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "1GB", got.MemoryLimit)
+	})
+
+	t.Run("the implicit file beats the default", func(t *testing.T) {
+		setup(t)
+		t.Setenv("LOGI_MEMORY_LIMIT", "")
+
+		got, err := config.Load([]string{"app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "3GB", got.MemoryLimit)
+	})
+
+	t.Run("a bad value is DuckDB's to reject", func(t *testing.T) {
+		isolate(t)
+
+		got, err := config.Load([]string{"--memory-limit", "lots", "app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "lots", got.MemoryLimit)
+	})
+}
+
 func TestUsage(t *testing.T) {
 	got := config.Usage()
 
@@ -390,4 +482,5 @@ func TestUsage(t *testing.T) {
 	require.Contains(t, got, "-f, --follow")
 	require.Contains(t, got, "--config")
 	require.Contains(t, got, "--time-field")
+	require.Contains(t, got, "--memory-limit")
 }

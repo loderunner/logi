@@ -30,6 +30,11 @@ const (
 	// timeFieldKey is the flag, the environment variable suffix and the
 	// config file key that name the time field.
 	timeFieldKey = "time-field"
+	// memoryLimitKey is the flag, the environment variable suffix and the
+	// config file key that name DuckDB's memory limit.
+	memoryLimitKey = "memory-limit"
+	// defaultMemoryLimit is the memory limit when none is set.
+	defaultMemoryLimit = "1GB"
 )
 
 // ErrHelp is returned by Load when the command line asks for help.
@@ -59,6 +64,9 @@ type Config struct {
 	// TimeField is the key that holds each line's time, exactly as the
 	// line flattens it, such as "log.time". "" detects it.
 	TimeField string
+	// MemoryLimit is DuckDB's memory_limit, such as "1GB". Config doesn't
+	// check it: DuckDB rejects a bad value when logstore.Open applies it.
+	MemoryLimit string
 }
 
 // newFlags returns the flag set that writes into cfg. It is the one place that
@@ -84,6 +92,11 @@ func newFlags(cfg *Config) *pflag.FlagSet {
 		"use this key as the time of each line, instead of\n"+
 			"detecting it (case-sensitive; a nested key is dotted,\n"+
 			"as in log.time)",
+	)
+	flags.StringVar(
+		&cfg.MemoryLimit, memoryLimitKey, defaultMemoryLimit,
+		"limit DuckDB's memory, such as 512MB or 2GB\n"+
+			"(data over it spills to a temporary directory)",
 	)
 
 	return flags
@@ -151,12 +164,18 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	}
 
+	err = bind(v, flags, memoryLimitKey)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg.Config, err = readConfigFile(v, v.GetString(configKey))
 	if err != nil {
 		return Config{}, err
 	}
 
 	cfg.TimeField = v.GetString(timeFieldKey)
+	cfg.MemoryLimit = v.GetString(memoryLimitKey)
 
 	return cfg, nil
 }
