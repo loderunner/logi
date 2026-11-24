@@ -70,21 +70,24 @@ func newFlags(cfg *Config) *pflag.FlagSet {
 	)
 	flags.StringVar(
 		&cfg.Config, configKey, "",
-		"read this JSON config file, which must exist\n"+
-			"(default $XDG_CONFIG_HOME/logi/config.json, or\n"+
-			"~/.config/logi/config.json, if it exists)",
+		"read this JSON config file\n"+
+			"(default "+implicitConfigFile()+")",
 	)
 
 	return flags
 }
 
-// Usage describes the command line, with the flags listed by pflag.
+// Usage describes the command line: the synopsis, the flags listed by pflag,
+// then notes that apply to all of them.
 func Usage() string {
-	return "usage: logi [flags] [file]\n" +
-		"With no file, logi reads standard input.\n" +
-		"Every flag but -f has a LOGI_ environment variable, such as " +
-		"LOGI_CONFIG.\n\n" +
-		newFlags(&Config{}).FlagUsages()
+	return "usage: logi [flags] [file]\n\n" +
+		"flags:\n" +
+		newFlags(&Config{}).FlagUsages() +
+		"\n" +
+		"  With no file, logi reads standard input.\n" +
+		"  Each flag has an environment variable named " + envPrefix + "_*,\n" +
+		"  where * is the flag's name in upper case, with hyphens as\n" +
+		"  underscores.\n"
 }
 
 // Load reads the command line, the environment and the config file. It
