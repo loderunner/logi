@@ -276,7 +276,12 @@ func (m Model) View() tea.View {
 
 	status := m.status()
 	status = ansi.Truncate(status, m.width, "…")
-	status = lipgloss.NewStyle().Reverse(true).Width(m.width).Render(status)
+	status = lipgloss.NewStyle().
+		Background(lipgloss.ANSIColor(ansi.Cyan)).
+		Foreground(lipgloss.ANSIColor(ansi.Black)).
+		Bold(true).
+		Width(m.width).
+		Render(status)
 
 	v.SetContent(m.table.View() + "\n" + status)
 
