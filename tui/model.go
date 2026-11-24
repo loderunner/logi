@@ -210,7 +210,10 @@ func (m Model) setColumns(newKeys []string, timeKey string) Model {
 	}
 
 	m.keys = keys
-	m.table = m.table.SetMessageColumn(messageIndex(keys)).ResetWidths()
+	m.table = m.table.
+		SetMessageColumn(messageIndex(keys)).
+		SetLevelColumn(levelIndex(keys)).
+		ResetWidths()
 
 	return m
 }

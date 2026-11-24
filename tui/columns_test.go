@@ -126,6 +126,13 @@ func TestDefaultKeysTimeKey(t *testing.T) {
 	)
 }
 
+func TestLevelIndex(t *testing.T) {
+	require.Equal(t, 0, levelIndex([]string{"level", "msg", "a"}))
+	require.Equal(t, 1, levelIndex([]string{"msg", "Severity"}))
+	require.Equal(t, -1, levelIndex([]string{"_raw"}))
+	require.Equal(t, -1, levelIndex(nil))
+}
+
 func TestMessageIndex(t *testing.T) {
 	require.Equal(t, 1, messageIndex([]string{"level", "msg", "a"}))
 	require.Equal(t, 0, messageIndex([]string{"Message"}))
