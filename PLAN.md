@@ -11,7 +11,7 @@ Main use cases:
 
 - `kubectl logs -f <pod> | logi`
 - `logi app.log` on a log file that hasn't rotated yet (usually under
-  100 MB)
+  100 MB), and `logi -f app.log` to keep following it
 
 Supported, but not optimized: files up to 4 GB.
 
@@ -82,11 +82,14 @@ the same ingest path for both:
 
 ### Input
 
-- A file argument is read from the start, then followed for appended lines.
-  logi ignores rotation and truncation.
+- A file argument is read from the start to EOF, like stdin. With `-f`, logi
+  then follows the file for appended lines, like `tail -f`. logi ignores
+  rotation and truncation. `-f` without a file is an error, because stdin is
+  always read to its end.
 - Stdin is read with plain blocking reads until EOF. The status bar then
   shows `EOF`.
-- Following a file waits for writes with fsnotify, watching that one file.
+- Following a file (`-f`) waits for writes with fsnotify, watching that one
+  file.
   The reader adds the watch before its first read, so a write between the
   last read and the wait isn't missed. At EOF it blocks until a `Write`
   event arrives, then reads again. Other events are ignored: rotation and
@@ -134,7 +137,8 @@ the same ingest path for both:
 ### Concurrency
 
 - **Reader goroutine.** Reads lines from the file or stdin, blocking on
-  stdin and waiting for file writes when following a file. Sends lines on a
+  stdin and waiting for file writes when following a file with `-f`. Sends
+  lines on a
   channel.
 - **Ingest goroutine.** The only writer. It parses lines, adds columns for
   new keys, and appends rows with the DuckDB Appender. It flushes every 10k
@@ -328,7 +332,7 @@ test input with:
 go run ./cmd/genlogs -size-mb 50 > /tmp/app.log
 
 # A trickle of about 5 lines per second until Ctrl-C, like `tail -f`. Append
-# it to a file that logi follows, or pipe it in. `-rate` changes the speed,
+# it to a file that `logi -f` follows, or pipe it in. `-rate` changes the speed,
 # and `-start-time` sets the first timestamp, with the clock running in real
 # time from there.
 go run ./cmd/genlogs >> /tmp/app.log
@@ -342,7 +346,7 @@ one feature.
 
 | # | You run | You see | Built |
 |---|---|---|---|
-| E1 | `logi /tmp/app.log`, `kubectl logs -f … \| logi`, and `go run ./cmd/genlogs >> /tmp/app.log` in another shell | Raw lines in a one-column table, newest at the top, filling while loading. Appended lines arrive. Status bar: rows, rows/s, % loaded or `EOF`. `q` quits. | Module setup, reader and ingest goroutines, in-memory DuckDB with a fixed memory limit and private temp directory (stale ones cleaned up), Appender batching, `Ingested` messages, bubbletea v2 table querying only the rows on screen, arrival-order `ts`. |
+| E1 | `logi -f /tmp/app.log`, `kubectl logs -f … \| logi`, and `go run ./cmd/genlogs >> /tmp/app.log` in another shell | Raw lines in a one-column table, newest at the top, filling while loading. Appended lines arrive. Status bar: rows, rows/s, % loaded or `EOF`. `q` quits. | Module setup, reader and ingest goroutines, in-memory DuckDB with a fixed memory limit and private temp directory (stale ones cleaned up), Appender batching, `Ingested` messages, bubbletea v2 table querying only the rows on screen, arrival-order `ts`. |
 | E2 | `logi /tmp/app.log` | Real columns: every key, level and message first. Lines that aren't JSON show their raw line across the row. | `jsontext` flattening, a `VARCHAR` column added per new key, `vals` column, detection of level and message keys, a width cap floor for the message column. |
 | E3 | `logi /tmp/app.log` | Rows sorted by their own timestamps, newest on top. Late lines don't move a scrolled view. | Timestamp detection and parsing, `ts` from the line with arrival time as fallback, keyset scrolling on `(ts, id)`, follow while at the top. |
 | E4 | `LOGI_TIME_FIELD=time logi --memory-limit 512MB /tmp/app.log` and `logi --help` | Flags, environment and config files all take effect, in precedence order. | `config/` with viper and pflag, `--config`, `--time-field`, `--memory-limit`, writing a single key back to the selected file. |
