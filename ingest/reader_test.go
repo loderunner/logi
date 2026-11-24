@@ -59,14 +59,14 @@ func (c *collector) ends() []int64 {
 	return ends
 }
 
-func TestReadStdin(t *testing.T) {
+func TestReadAll(t *testing.T) {
 	read := func(t *testing.T, input string) *collector {
 		t.Helper()
 
 		out := make(chan Line)
 		c := collect(out)
 
-		err := ReadStdin(t.Context(), strings.NewReader(input), out)
+		err := ReadAll(t.Context(), strings.NewReader(input), out)
 		require.NoError(t, err)
 		<-c.done
 
@@ -120,7 +120,7 @@ func TestReadStdin(t *testing.T) {
 		out := make(chan Line)
 		c := collect(out)
 
-		err := ReadStdin(ctx, strings.NewReader("one\n"), out)
+		err := ReadAll(ctx, strings.NewReader("one\n"), out)
 		require.NoError(t, err)
 		<-c.done
 
@@ -128,7 +128,7 @@ func TestReadStdin(t *testing.T) {
 	})
 }
 
-func TestReadFile(t *testing.T) {
+func TestFollow(t *testing.T) {
 	// Real file events can't run in a synctest bubble, so these tests wait
 	// for them with require.Eventually.
 	const (
@@ -148,7 +148,7 @@ func TestReadFile(t *testing.T) {
 		c := collect(out)
 		errc := make(chan error, 1)
 
-		go func() { errc <- ReadFile(ctx, f, out) }()
+		go func() { errc <- Follow(ctx, f, out) }()
 
 		stop := func() {
 			cancel()

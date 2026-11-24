@@ -1,14 +1,17 @@
 // Command logi is a terminal UI for JSONL logs. It reads a file, or stdin
-// when there is no argument, and keeps reading as the input grows.
+// when there is no argument. With -f it keeps reading as the file grows.
 //
 //	logi app.log
+//	logi -f app.log
 //	kubectl logs -f <pod> | logi
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
@@ -20,8 +23,9 @@ import (
 )
 
 const (
-	usage = "usage: logi [file]\n" +
-		"With no file, logi reads standard input.\n"
+	usage = "usage: logi [-f] [file]\n" +
+		"With no file, logi reads standard input.\n" +
+		"  -f  keep reading as the file grows\n"
 
 	// memoryLimit is DuckDB's memory limit.
 	memoryLimit = "1GB"
@@ -34,13 +38,13 @@ func main() {
 }
 
 func run() int {
-	path, ok := parseArgs(os.Args[1:])
+	cfg, ok := parseArgs(os.Args[1:])
 	if !ok {
 		fmt.Fprint(os.Stderr, usage)
 		return 2
 	}
 
-	err := start(path)
+	err := start(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "logi:", err)
 		return 1
@@ -49,21 +53,48 @@ func run() int {
 	return 0
 }
 
-// parseArgs returns the file to read, or "" for stdin. It reports false when
-// the arguments are wrong.
-func parseArgs(args []string) (string, bool) {
-	switch len(args) {
+// config is what the command line asks for.
+type config struct {
+	// path is the file to read, or "" for stdin.
+	path string
+	// follow keeps reading a file as it grows.
+	follow bool
+}
+
+// parseArgs reads the command line. It reports false when the arguments are
+// wrong, including -f without a file: stdin is always read to its end.
+func parseArgs(args []string) (config, bool) {
+	flags := flag.NewFlagSet("logi", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+
+	var cfg config
+
+	flags.BoolVar(&cfg.follow, "f", false, "")
+
+	err := flags.Parse(args)
+	if err != nil {
+		return config{}, false
+	}
+
+	switch flags.NArg() {
 	case 0:
-		return "", !term.IsTerminal(os.Stdin.Fd())
+		if cfg.follow || term.IsTerminal(os.Stdin.Fd()) {
+			return config{}, false
+		}
+
+		return cfg, true
 	case 1:
-		return args[0], true
+		cfg.path = flags.Arg(0)
+		return cfg, true
 	default:
-		return "", false
+		return config{}, false
 	}
 }
 
-// start runs logi on the file at path, or on stdin if path is empty.
-func start(path string) (err error) {
+// start runs logi on the file at cfg.path, or on stdin if the path is empty.
+func start(cfg config) (err error) {
+	path := cfg.path
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -113,10 +144,10 @@ func start(path string) (err error) {
 	}
 
 	go func() {
-		if path == "" {
-			fail(ingest.ReadStdin(ctx, input, lines))
+		if cfg.follow {
+			fail(ingest.Follow(ctx, input, lines))
 		} else {
-			fail(ingest.ReadFile(ctx, input, lines))
+			fail(ingest.ReadAll(ctx, input, lines))
 		}
 	}()
 
@@ -137,7 +168,7 @@ func start(path string) (err error) {
 	final, runErr := p.Run()
 
 	// Stop the goroutines and wait for ingest, which closes the Writer.
-	// Don't wait for ReadStdin: a blocked read on stdin can't be interrupted,
+	// Don't wait for ReadAll: a blocked read on stdin can't be interrupted,
 	// and the process is about to exit.
 	cancel()
 

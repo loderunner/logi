@@ -84,10 +84,11 @@ func send(ctx context.Context, out chan<- Line, line Line) error {
 	}
 }
 
-// ReadStdin sends the lines of r on out until EOF, including a last line with
+// ReadAll sends the lines of r on out until EOF, including a last line with
 // no newline, then closes out. It returns nil if ctx ends first. A blocked
-// read on r can't be interrupted, so ReadStdin returns only when the read does.
-func ReadStdin(ctx context.Context, r io.Reader, out chan<- Line) error {
+// read on r can't be interrupted, so ReadAll returns only when the read does.
+// It serves stdin, and files that aren't followed.
+func ReadAll(ctx context.Context, r io.Reader, out chan<- Line) error {
 	defer close(out)
 
 	lr := newLineReader(r)
@@ -113,13 +114,13 @@ func ReadStdin(ctx context.Context, r io.Reader, out chan<- Line) error {
 	}
 }
 
-// ReadFile sends the lines of f on out, from its current position, then keeps
+// Follow sends the lines of f on out, from its current position, then keeps
 // sending lines as they are appended until ctx ends. It then closes out and
 // returns nil. Rotation and truncation aren't handled.
 //
-// ReadFile waits for writes with fsnotify. It watches f before the first read,
+// Follow waits for writes with fsnotify. It watches f before the first read,
 // so a write between the last read and the wait isn't missed.
-func ReadFile(ctx context.Context, f *os.File, out chan<- Line) error {
+func Follow(ctx context.Context, f *os.File, out chan<- Line) error {
 	defer close(out)
 
 	watcher, err := fsnotify.NewWatcher()
