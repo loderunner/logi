@@ -132,7 +132,8 @@ the same ingest path for both:
       `UPDATE` sets `ts` on every row before N to row N's time, so they sort
       just before it. There is no restamp when N is 1.
 - The catch-up speed (~60k rows/s) is accepted. Rows appear within ~70ms.
-  For file input, the status bar shows the percentage loaded so far.
+  For file input, the status bar shows the percentage loaded so far. After
+  the progress, it shows `following` or `paused` (see [UI](#ui)).
 
 ### Concurrency
 
@@ -183,9 +184,16 @@ the same ingest path for both:
   - The header row is a focus stop. Enter on it flips newest at the top or
     the bottom. Timestamp is the only sort key, so the header has no column
     cursor.
-  - While you're at the newest row, the table follows new rows. Scrolling
-    away pauses following, and the view stays anchored on the top row's
-    `(ts, id)`, so late lines don't shift what you're reading.
+  - `↑`/`↓` scroll the view one row, and PgUp/PgDn one page, which is the
+    height of the table. There are no jump keys, because Home/End scroll
+    columns.
+  - While the newest row is at the top, the table follows new rows, and the
+    status bar shows `following`. Scrolling away pauses following, and the
+    status bar shows `paused`. The view stays anchored on the top row's
+    `(ts, id)`, so late lines don't shift what you're reading. Scrolling up
+    to the newest row again resumes following.
+  - A line that arrives late with an old time can appear below the top row,
+    but the top row never moves.
 - **Default columns.** Every known key except `_raw` and the time field. The
   timestamp comes first, then a level-like key and a message-like key when
   detected, then every other key in the order it first appeared. When `_raw`
@@ -346,7 +354,7 @@ one feature.
 
 | # | You run | You see | Built |
 |---|---|---|---|
-| E1 | `logi -f /tmp/app.log`, `kubectl logs -f … \| logi`, and `go run ./cmd/genlogs >> /tmp/app.log` in another shell | Raw lines in a one-column table, newest at the top, filling while loading. Appended lines arrive. Status bar: rows, rows/s, % loaded or `EOF`. `q` quits. | Module setup, reader and ingest goroutines, in-memory DuckDB with a fixed memory limit and private temp directory (stale ones cleaned up), Appender batching, `Ingested` messages, bubbletea v2 table querying only the rows on screen, arrival-order `ts`. |
+| E1 | `logi -f /tmp/app.log`, `kubectl logs -f … \| logi`, and `go run ./cmd/genlogs >> /tmp/app.log` in another shell | Raw lines in a one-column table, newest at the top, filling while loading. Appended lines arrive. Status bar: rows, rows/s, % loaded or `EOF`, and `following` or `paused`. `q` quits. | Module setup, reader and ingest goroutines, in-memory DuckDB with a fixed memory limit and private temp directory (stale ones cleaned up), Appender batching, `Ingested` messages, bubbletea v2 table querying only the rows on screen, arrival-order `ts`. |
 | E2 | `logi /tmp/app.log` | Real columns: every key, level and message first. Lines that aren't JSON show their raw line across the row. | `jsontext` flattening, a `VARCHAR` column added per new key, `vals` column, detection of level and message keys, a width cap floor for the message column. |
 | E3 | `logi /tmp/app.log` | Rows sorted by their own timestamps, newest on top. Late lines don't move a scrolled view. | Timestamp detection and parsing, `ts` from the line with arrival time as fallback, keyset scrolling on `(ts, id)`, follow while at the top. |
 | E4 | `LOGI_TIME_FIELD=time logi --memory-limit 512MB /tmp/app.log` and `logi --help` | Flags, environment and config files all take effect, in precedence order. | `config/` with viper and pflag, `--config`, `--time-field`, `--memory-limit`, writing a single key back to the selected file. |
