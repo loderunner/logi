@@ -50,17 +50,36 @@ func openStore(t *testing.T) (*Store, string) {
 func TestStore(t *testing.T) {
 	t.Run("Open", func(t *testing.T) {
 		t.Run("sets the memory limit", func(t *testing.T) {
-			store, _ := openStore(t)
-			t.Cleanup(func() { _ = store.Close() })
+			// DuckDB reads GB as 1000^3 bytes and reports the limit in
+			// 1024^i units, so "1GB" reads back as "953.6 MiB".
+			tests := []struct{ limit, want string }{
+				{"1GB", "953.6 MiB"},
+				{"512MB", "488.2 MiB"},
+				{"512MiB", "512.0 MiB"},
+				{"2GiB", "2.0 GiB"},
+			}
 
-			var limit string
+			for _, tt := range tests {
+				t.Run(tt.limit, func(t *testing.T) {
+					t.Setenv("TMPDIR", t.TempDir())
 
-			err := store.db.QueryRowContext(
-				t.Context(),
-				"SELECT current_setting('memory_limit')",
-			).Scan(&limit)
-			require.NoError(t, err)
-			require.Equal(t, "1.0 GiB", limit)
+					store, err := Open(
+						t.Context(),
+						Options{MemoryLimit: tt.limit},
+					)
+					require.NoError(t, err)
+					t.Cleanup(func() { _ = store.Close() })
+
+					var got string
+
+					err = store.db.QueryRowContext(
+						t.Context(),
+						"SELECT current_setting('memory_limit')",
+					).Scan(&got)
+					require.NoError(t, err)
+					require.Equal(t, tt.want, got)
+				})
+			}
 		})
 
 		t.Run("creates a private directory", func(t *testing.T) {
@@ -86,15 +105,20 @@ func TestStore(t *testing.T) {
 		})
 
 		t.Run("rejects an invalid memory limit", func(t *testing.T) {
-			root := t.TempDir()
-			t.Setenv("TMPDIR", root)
+			// Each of these is DuckDB's call: logi checks none of them.
+			for _, limit := range []string{"lots", "", "100000", "1XB"} {
+				t.Run(limit, func(t *testing.T) {
+					root := t.TempDir()
+					t.Setenv("TMPDIR", root)
 
-			_, err := Open(t.Context(), Options{MemoryLimit: "lots"})
-			require.Error(t, err)
+					_, err := Open(t.Context(), Options{MemoryLimit: limit})
+					require.ErrorContains(t, err, "set memory_limit")
 
-			dirs, err := filepath.Glob(filepath.Join(root, "logi-*"))
-			require.NoError(t, err)
-			require.Empty(t, dirs)
+					dirs, err := filepath.Glob(filepath.Join(root, "logi-*"))
+					require.NoError(t, err)
+					require.Empty(t, dirs)
+				})
+			}
 		})
 	})
 
