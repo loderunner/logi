@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -28,6 +29,13 @@ func update(t *testing.T, m Model, msg tea.Msg) (Model, tea.Cmd) {
 	return model, cmd
 }
 
+// keysAre matches a PageQuery that asks for keys.
+func keysAre(keys ...string) gomock.Matcher {
+	return gomock.Cond(func(q logstore.PageQuery) bool {
+		return slices.Equal(q.Keys, keys)
+	})
+}
+
 func TestModel(t *testing.T) {
 	size := tea.WindowSizeMsg{Width: 40, Height: 6}
 
@@ -39,8 +47,8 @@ func TestModel(t *testing.T) {
 				mockRows := tui_mock.NewMockRows(ctrl)
 				// The status bar takes one of the 6 lines.
 				mockRows.EXPECT().
-					Newest(gomock.Any(), 5, []string{"_raw"}).
-					Return([]logstore.Row{{ID: 2, Raw: "newer", Values: []string{""}}, {ID: 1, Raw: "older", Values: []string{""}}}, nil)
+					Page(gomock.Any(), logstore.PageQuery{Limit: 5, Keys: []string{"_raw"}}).
+					Return(logstore.Page{Rows: []logstore.Row{{ID: 2, Raw: "newer", Values: []string{""}}, {ID: 1, Raw: "older", Values: []string{""}}}}, nil)
 
 				m := New(mockRows, Options{FileSize: 100})
 				m, cmd := update(t, m, size)
@@ -68,10 +76,10 @@ func TestModel(t *testing.T) {
 			var asked [][]string
 
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(_ context.Context, _ int, keys []string) ([]logstore.Row, error) {
-					asked = append(asked, keys)
-					return nil, nil
+				Page(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, q logstore.PageQuery) (logstore.Page, error) {
+					asked = append(asked, q.Keys)
+					return logstore.Page{}, nil
 				}).
 				Times(4)
 
@@ -115,8 +123,8 @@ func TestModel(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRows := tui_mock.NewMockRows(ctrl)
 				mockRows.EXPECT().
-					Newest(gomock.Any(), gomock.Any(), []string{"level", "msg", "a"}).
-					Return(nil, nil)
+					Page(gomock.Any(), keysAre("level", "msg", "a")).
+					Return(logstore.Page{}, nil)
 
 				m := New(mockRows, Options{FileSize: 100})
 				m, _ = update(t, m, size)
@@ -137,8 +145,8 @@ func TestModel(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRows := tui_mock.NewMockRows(ctrl)
 				mockRows.EXPECT().
-					Newest(gomock.Any(), gomock.Any(), []string{"_raw"}).
-					Return(nil, nil)
+					Page(gomock.Any(), keysAre("_raw")).
+					Return(logstore.Page{}, nil)
 
 				m := New(mockRows, Options{FileSize: 100})
 				m, _ = update(t, m, size)
@@ -161,10 +169,10 @@ func TestModel(t *testing.T) {
 				var asked [][]string
 
 				mockRows.EXPECT().
-					Newest(gomock.Any(), gomock.Any(), gomock.Any()).
-					DoAndReturn(func(_ context.Context, _ int, keys []string) ([]logstore.Row, error) {
-						asked = append(asked, keys)
-						return nil, nil
+					Page(gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, q logstore.PageQuery) (logstore.Page, error) {
+						asked = append(asked, q.Keys)
+						return logstore.Page{}, nil
 					}).
 					Times(3)
 
@@ -206,11 +214,11 @@ func TestModel(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockRows := tui_mock.NewMockRows(ctrl)
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any(), []string{"_raw"}).
-				Return([]logstore.Row{{ID: 1, Raw: "old", Values: []string{"x"}}}, nil)
+				Page(gomock.Any(), keysAre("_raw")).
+				Return(logstore.Page{Rows: []logstore.Row{{ID: 1, Raw: "old", Values: []string{"x"}}}}, nil)
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any(), []string{"msg"}).
-				Return([]logstore.Row{{ID: 1, Raw: "new", Values: []string{"y"}}}, nil)
+				Page(gomock.Any(), keysAre("msg")).
+				Return(logstore.Page{Rows: []logstore.Row{{ID: 1, Raw: "new", Values: []string{"y"}}}}, nil)
 
 			m := New(mockRows, Options{FileSize: 100})
 			m, oldCmd := update(t, m, size)
@@ -230,11 +238,11 @@ func TestModel(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockRows := tui_mock.NewMockRows(ctrl)
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return([]logstore.Row{{ID: 1, Raw: "stale"}}, nil)
+				Page(gomock.Any(), gomock.Any()).
+				Return(logstore.Page{Rows: []logstore.Row{{ID: 1, Raw: "stale"}}}, nil)
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return([]logstore.Row{{ID: 2, Raw: "fresh"}}, nil)
+				Page(gomock.Any(), gomock.Any()).
+				Return(logstore.Page{Rows: []logstore.Row{{ID: 2, Raw: "fresh"}}}, nil)
 
 			m := New(mockRows, Options{FileSize: 100})
 			m, staleCmd := update(t, m, size)
@@ -257,10 +265,10 @@ func TestModel(t *testing.T) {
 			var queryCtx context.Context
 
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(ctx context.Context, _ int, _ []string) ([]logstore.Row, error) {
+				Page(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(ctx context.Context, _ logstore.PageQuery) (logstore.Page, error) {
 					queryCtx = ctx
-					return nil, nil
+					return logstore.Page{}, nil
 				})
 
 			m := New(mockRows, Options{FileSize: 100})
@@ -276,8 +284,8 @@ func TestModel(t *testing.T) {
 			ctrl := gomock.NewController(t)
 			mockRows := tui_mock.NewMockRows(ctrl)
 			mockRows.EXPECT().
-				Newest(gomock.Any(), gomock.Any(), gomock.Any()).
-				Return(nil, errors.New("INTERRUPT Error: Interrupted!"))
+				Page(gomock.Any(), gomock.Any()).
+				Return(logstore.Page{}, errors.New("INTERRUPT Error: Interrupted!"))
 
 			m := New(mockRows, Options{FileSize: 100})
 			m, cmd := update(t, m, size)
@@ -309,8 +317,8 @@ func TestModel(t *testing.T) {
 				mockRows := tui_mock.NewMockRows(ctrl)
 				boom := errors.New("boom")
 				mockRows.EXPECT().
-					Newest(gomock.Any(), gomock.Any(), gomock.Any()).
-					Return(nil, boom)
+					Page(gomock.Any(), gomock.Any()).
+					Return(logstore.Page{}, boom)
 
 				m := New(mockRows, Options{FileSize: 100})
 				m, cmd := update(t, m, size)
@@ -396,7 +404,11 @@ func TestModel(t *testing.T) {
 			m.bytes = 84
 			m.rate = 8000
 
-			require.Equal(t, "12,345 rows · 8,000 rows/s · 42%", m.status())
+			require.Equal(
+				t,
+				"12,345 rows · 8,000 rows/s · 42% · following",
+				m.status(),
+			)
 		})
 
 		t.Run("a file caps the percentage at 100", func(t *testing.T) {
@@ -412,14 +424,239 @@ func TestModel(t *testing.T) {
 			require.Equal(t, "100%", m.progress())
 		})
 
+		t.Run(
+			"shows following until the view scrolls away",
+			func(t *testing.T) {
+				m := New(mockRows, Options{Stdin: true})
+				require.Equal(
+					t,
+					"0 rows · 0 rows/s · reading · following",
+					m.status(),
+				)
+
+				m.from = &logstore.Key{ID: 5}
+				require.Equal(
+					t,
+					"0 rows · 0 rows/s · reading · paused",
+					m.status(),
+				)
+			},
+		)
+
 		t.Run("stdin shows reading, then EOF", func(t *testing.T) {
 			m := New(mockRows, Options{Stdin: true})
 			require.Equal(t, "reading", m.progress())
 
 			m, _ = update(t, m, ingest.Ingested{Rows: 3, EOF: true})
 			require.Equal(t, "EOF", m.progress())
-			require.Equal(t, "3 rows · 0 rows/s · EOF", m.status())
+			require.Equal(t, "3 rows · 0 rows/s · EOF · following", m.status())
 		})
+	})
+
+	t.Run("scrolling", func(t *testing.T) {
+		// A table 5 rows high: the status bar takes one of the 6 lines.
+		const page = 5
+
+		// asks records the query of every Page call and answers with answer.
+		asks := func(
+			t *testing.T,
+			answer logstore.Page,
+		) (*tui_mock.MockRows, *[]logstore.PageQuery) {
+			t.Helper()
+
+			ctrl := gomock.NewController(t)
+			mockRows := tui_mock.NewMockRows(ctrl)
+
+			var asked []logstore.PageQuery
+
+			mockRows.EXPECT().
+				Page(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, q logstore.PageQuery) (logstore.Page, error) {
+					asked = append(asked, q)
+					return answer, nil
+				}).
+				AnyTimes()
+
+			return mockRows, &asked
+		}
+
+		key := func(code rune) tea.KeyPressMsg {
+			return tea.KeyPressMsg{Code: code}
+		}
+
+		t.Run("each key moves the view", func(t *testing.T) {
+			for name, tc := range map[string]struct {
+				key  tea.KeyPressMsg
+				move int
+			}{
+				"up":     {key(tea.KeyUp), -1},
+				"down":   {key(tea.KeyDown), 1},
+				"pgup":   {key(tea.KeyPgUp), -page},
+				"pgdown": {key(tea.KeyPgDown), page},
+			} {
+				mockRows, asked := asks(t, logstore.Page{})
+
+				m := New(mockRows, Options{FileSize: 100})
+				m, _ = update(t, m, size)
+
+				_, cmd := update(t, m, tc.key)
+				require.NotNil(t, cmd, name)
+				cmd()
+
+				require.Equal(t, []logstore.PageQuery{{
+					Move:  tc.move,
+					Limit: page,
+					Keys:  []string{"_raw"},
+				}}, *asked, name)
+			}
+		})
+
+		t.Run("a result sets from and resets the move", func(t *testing.T) {
+			from := &logstore.Key{TS: time.Unix(0, 50), ID: 5}
+			mockRows, asked := asks(t, logstore.Page{
+				From: from,
+				Rows: []logstore.Row{
+					{ID: 5, Raw: "five", Values: []string{""}},
+				},
+			})
+
+			m := New(mockRows, Options{FileSize: 100})
+			m, _ = update(t, m, size)
+			require.Contains(t, m.status(), "· following")
+
+			m, cmd := update(t, m, key(tea.KeyDown))
+			require.Equal(t, 1, m.move)
+
+			m, _ = update(t, m, cmd())
+			require.Same(t, from, m.from)
+			require.Zero(t, m.move)
+			require.Equal(t, "five", m.table.Rows()[0].Raw)
+			require.Contains(t, m.status(), "· paused")
+
+			// The next key starts from the confirmed row.
+			m, cmd = update(t, m, key(tea.KeyUp))
+			cmd()
+
+			require.Equal(t, logstore.PageQuery{
+				From:  from,
+				Move:  -1,
+				Limit: page,
+				Keys:  []string{"_raw"},
+			}, (*asked)[1])
+		})
+
+		t.Run("a result that reaches the newest row follows again",
+			func(t *testing.T) {
+				mockRows, _ := asks(t, logstore.Page{})
+
+				m := New(mockRows, Options{FileSize: 100})
+				m, _ = update(t, m, size)
+				m.from = &logstore.Key{ID: 5}
+				require.Contains(t, m.status(), "paused")
+
+				m, cmd := update(t, m, key(tea.KeyPgUp))
+				m, _ = update(t, m, cmd())
+
+				require.Nil(t, m.from)
+				require.Contains(t, m.status(), "following")
+			})
+
+		t.Run("two presses before a result send both", func(t *testing.T) {
+			mockRows, asked := asks(t, logstore.Page{
+				From: &logstore.Key{ID: 8},
+			})
+
+			m := New(mockRows, Options{FileSize: 100})
+			m, _ = update(t, m, size)
+
+			m, first := update(t, m, key(tea.KeyDown))
+
+			// The first query finishes before the second key press cancels it.
+			stale := first()
+
+			m, second := update(t, m, key(tea.KeyDown))
+			require.Equal(t, 2, m.move)
+
+			fresh := second()
+
+			require.Equal(t, 1, (*asked)[0].Move)
+			require.Equal(t, 2, (*asked)[1].Move)
+
+			// The first result is dropped by its generation number.
+			m, _ = update(t, m, stale)
+			require.Equal(t, 2, m.move)
+			require.Nil(t, m.from)
+
+			m, _ = update(t, m, fresh)
+			require.Zero(t, m.move)
+			require.Equal(t, &logstore.Key{ID: 8}, m.from)
+		})
+
+		t.Run("Ingested while paused keeps from", func(t *testing.T) {
+			mockRows, asked := asks(t, logstore.Page{})
+
+			m := New(mockRows, Options{FileSize: 100})
+			m, _ = update(t, m, size)
+
+			from := &logstore.Key{TS: time.Unix(0, 50), ID: 5}
+			m.from = from
+
+			m, cmd := update(t, m, ingest.Ingested{Rows: 9})
+			cmd()
+
+			require.Equal(t, []logstore.PageQuery{{
+				From:  from,
+				Limit: page,
+				Keys:  []string{"_raw"},
+			}}, *asked)
+			require.Same(t, from, m.from)
+		})
+
+		t.Run("Ingested keeps a move not yet confirmed", func(t *testing.T) {
+			mockRows, asked := asks(t, logstore.Page{})
+
+			m := New(mockRows, Options{FileSize: 100})
+			m, _ = update(t, m, size)
+
+			m, _ = update(t, m, key(tea.KeyPgDown))
+			_, cmd := update(t, m, ingest.Ingested{Rows: 9})
+			cmd()
+
+			require.Equal(t, page, (*asked)[0].Move)
+		})
+
+		t.Run("resizing keeps from", func(t *testing.T) {
+			mockRows, asked := asks(t, logstore.Page{})
+
+			m := New(mockRows, Options{FileSize: 100})
+			m, _ = update(t, m, size)
+
+			from := &logstore.Key{ID: 5}
+			m.from = from
+
+			m, cmd := update(t, m, tea.WindowSizeMsg{Width: 40, Height: 11})
+			cmd()
+
+			require.Equal(t, from, (*asked)[0].From)
+			require.Equal(t, 10, (*asked)[0].Limit)
+
+			// A page is the new height.
+			m, cmd = update(t, m, key(tea.KeyPgDown))
+			cmd()
+
+			require.Equal(t, 10, (*asked)[1].Move)
+		})
+
+		t.Run("keys do nothing before the window size is known",
+			func(t *testing.T) {
+				mockRows, asked := asks(t, logstore.Page{})
+
+				m := New(mockRows, Options{FileSize: 100})
+				_, cmd := update(t, m, key(tea.KeyDown))
+
+				require.Nil(t, cmd)
+				require.Empty(t, *asked)
+			})
 	})
 
 	t.Run("formatCount", func(t *testing.T) {

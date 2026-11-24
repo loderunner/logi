@@ -21,6 +21,18 @@ func at(n int64) time.Time {
 	return time.Unix(0, n).UTC()
 }
 
+// newest returns the newest limit rows, with a value for each of keys.
+func newest(
+	ctx context.Context,
+	store *Store,
+	limit int,
+	keys []string,
+) ([]Row, error) {
+	page, err := store.Page(ctx, PageQuery{Limit: limit, Keys: keys})
+
+	return page.Rows, err
+}
+
 // openStore opens a Store whose temporary directories live under a fresh
 // root, which it returns.
 func openStore(t *testing.T) (*Store, string) {
@@ -178,9 +190,9 @@ func TestWriter(t *testing.T) {
 
 	ctx := context.Background()
 
-	t.Run("Newest", func(t *testing.T) {
+	t.Run("Page", func(t *testing.T) {
 		t.Run("returns nothing on an empty store", func(t *testing.T) {
-			rows, err := store.Newest(ctx, 10, nil)
+			rows, err := newest(ctx, store, 10, nil)
 			require.NoError(t, err)
 			require.Empty(t, rows)
 		})
@@ -197,7 +209,7 @@ func TestWriter(t *testing.T) {
 			})
 			require.NoError(t, err)
 
-			rows, err := store.Newest(ctx, 10, []string{"_raw"})
+			rows, err := newest(ctx, store, 10, []string{"_raw"})
 			require.NoError(t, err)
 			require.Empty(t, rows)
 
@@ -205,7 +217,7 @@ func TestWriter(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, []string{"_raw"}, keys)
 
-			rows, err = store.Newest(ctx, 10, []string{"_raw"})
+			rows, err = newest(ctx, store, 10, []string{"_raw"})
 			require.NoError(t, err)
 			require.Equal(t, []Row{
 				{ID: 1, TS: at(100), Raw: "first", Values: []string{"first"}},
@@ -213,7 +225,7 @@ func TestWriter(t *testing.T) {
 		})
 	})
 
-	t.Run("Newest", func(t *testing.T) {
+	t.Run("Page", func(t *testing.T) {
 		t.Run(
 			"returns the newest rows first, up to the limit",
 			func(t *testing.T) {
@@ -232,7 +244,7 @@ func TestWriter(t *testing.T) {
 				require.NoError(t, err)
 				require.Empty(t, keys)
 
-				rows, err := store.Newest(ctx, 3, nil)
+				rows, err := newest(ctx, store, 3, nil)
 				require.NoError(t, err)
 				require.Equal(t, []Row{
 					{ID: 3, TS: at(200), Raw: "newest", Values: []string{}},
@@ -280,7 +292,7 @@ func TestColumns(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []string{"a", "b"}, keys)
 
-		rows, err := store.Newest(t.Context(), 10, []string{"a", "b"})
+		rows, err := newest(t.Context(), store, 10, []string{"a", "b"})
 		require.NoError(t, err)
 		require.Equal(t, []Row{
 			{ID: 2, TS: at(20), Raw: "r2", Values: []string{"y", "z"}},
@@ -348,7 +360,7 @@ func TestColumns(t *testing.T) {
 
 			keys := []string{"Level", "level", "id", "ID", "raw", "ts", "vals"}
 
-			rows, err := store.Newest(t.Context(), 1, keys)
+			rows, err := newest(t.Context(), store, 1, keys)
 			require.NoError(t, err)
 			require.Equal(t, []Row{
 				{
@@ -402,7 +414,7 @@ func TestColumns(t *testing.T) {
 		_, err = w.Flush()
 		require.NoError(t, err)
 
-		rows, err := store.Newest(t.Context(), 1, []string{"nope", "a"})
+		rows, err := newest(t.Context(), store, 1, []string{"nope", "a"})
 		require.NoError(t, err)
 		require.Equal(t, []string{"", "1"}, rows[0].Values)
 	})
@@ -418,7 +430,7 @@ func TestColumns(t *testing.T) {
 		_, err = w.Flush()
 		require.NoError(t, err)
 
-		rows, err := store.Newest(t.Context(), 1, []string{"k"})
+		rows, err := newest(t.Context(), store, 1, []string{"k"})
 		require.NoError(t, err)
 		require.Equal(t, "a\ufffdb", rows[0].Raw)
 		require.Equal(t, []string{"e\ufffdf"}, rows[0].Values)
@@ -450,7 +462,7 @@ func TestColumns(t *testing.T) {
 		_, err = w.Flush()
 		require.NoError(t, err)
 
-		rows, err := store.Newest(t.Context(), 1, []string{`k"; --`})
+		rows, err := newest(t.Context(), store, 1, []string{`k"; --`})
 		require.NoError(t, err)
 		require.Equal(t, []string{value}, rows[0].Values)
 	})
@@ -483,7 +495,7 @@ func TestColumns(t *testing.T) {
 					keys = *p
 				}
 
-				_, err := store.Newest(t.Context(), 5, keys)
+				_, err := newest(t.Context(), store, 5, keys)
 				assert.NoError(t, err)
 			}
 		}()
@@ -515,7 +527,7 @@ func TestColumns(t *testing.T) {
 		close(done)
 		queried.Wait()
 
-		rows, err := store.Newest(t.Context(), 1, keys)
+		rows, err := newest(t.Context(), store, 1, keys)
 		require.NoError(t, err)
 		require.Equal(t, "v", rows[0].Values[49])
 	})
@@ -533,7 +545,7 @@ func TestTimestamps(t *testing.T) {
 		_, err = w.Flush()
 		require.NoError(t, err)
 
-		rows, err := store.Newest(t.Context(), 1, nil)
+		rows, err := newest(t.Context(), store, 1, nil)
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		require.True(t, ts.Equal(rows[0].TS), "got %v", rows[0].TS)
@@ -554,13 +566,13 @@ func TestTimestamps(t *testing.T) {
 			_, err = w.Flush()
 			require.NoError(t, err)
 
-			rows, err := store.Newest(t.Context(), 1, nil)
+			rows, err := newest(t.Context(), store, 1, nil)
 			require.NoError(t, err)
 			require.True(t, ts.Equal(rows[0].TS))
 		},
 	)
 
-	t.Run("Newest orders by time, then id", func(t *testing.T) {
+	t.Run("Page orders by time, then id", func(t *testing.T) {
 		store, w := newTestStore(t)
 
 		base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -585,7 +597,7 @@ func TestTimestamps(t *testing.T) {
 		_, err := w.Flush()
 		require.NoError(t, err)
 
-		rows, err := store.Newest(t.Context(), 10, nil)
+		rows, err := newest(t.Context(), store, 10, nil)
 		require.NoError(t, err)
 
 		ids := make([]int64, len(rows))
@@ -622,7 +634,7 @@ func TestTimestamps(t *testing.T) {
 				err := w.Restamp(3, at(99))
 				require.NoError(t, err)
 
-				rows, err := store.Newest(t.Context(), 10, nil)
+				rows, err := newest(t.Context(), store, 10, nil)
 				require.NoError(t, err)
 				require.Equal(t, []Row{
 					{ID: 2, TS: at(99), Values: []string{}},
@@ -645,7 +657,7 @@ func TestTimestamps(t *testing.T) {
 			err = w.Restamp(3, at(5))
 			require.NoError(t, err)
 
-			rows, err := store.Newest(t.Context(), 10, nil)
+			rows, err := newest(t.Context(), store, 10, nil)
 			require.NoError(t, err)
 			require.Equal(t, []Row{
 				{ID: 3, TS: at(30), Values: []string{}},
@@ -661,7 +673,7 @@ func TestTimestamps(t *testing.T) {
 			err := w.Restamp(1, at(99))
 			require.NoError(t, err)
 
-			rows, err := store.Newest(t.Context(), 10, nil)
+			rows, err := newest(t.Context(), store, 10, nil)
 			require.NoError(t, err)
 			require.Equal(t, []Row{
 				{ID: 2, TS: at(20), Values: []string{}},
@@ -695,7 +707,7 @@ func TestTimestamps(t *testing.T) {
 			_, err = w.Flush()
 			require.NoError(t, err)
 
-			rows, err := store.Newest(t.Context(), 10, []string{"j"})
+			rows, err := newest(t.Context(), store, 10, []string{"j"})
 			require.NoError(t, err)
 			require.Equal(t, []Row{
 				{ID: 3, TS: at(100), Values: []string{"w"}},
@@ -703,5 +715,312 @@ func TestTimestamps(t *testing.T) {
 				{ID: 2, TS: at(20), Values: []string{""}},
 			}, rows)
 		})
+	})
+}
+
+// storeRows appends the rows with the given ids to w, each with the time
+// id*10 nanoseconds after the epoch, and flushes.
+func storeRows(t *testing.T, w *Writer, ids ...int64) {
+	t.Helper()
+
+	for _, id := range ids {
+		storeRow(t, w, id, at(id*10))
+	}
+
+	_, err := w.Flush()
+	require.NoError(t, err)
+}
+
+// storeRow appends a row to w and flushes.
+func storeRow(t *testing.T, w *Writer, id int64, ts time.Time) {
+	t.Helper()
+
+	err := w.Append(id, ts, "r", "", map[string]string{"_raw": "r"})
+	require.NoError(t, err)
+
+	_, err = w.Flush()
+	require.NoError(t, err)
+}
+
+// idRange returns the ids from through to, counting down if from > to.
+func idRange(from, to int64) []int64 {
+	var ids []int64
+
+	step := int64(1)
+	if from > to {
+		step = -1
+	}
+
+	for id := from; id != to+step; id += step {
+		ids = append(ids, id)
+	}
+
+	return ids
+}
+
+// rowIDs returns the ids of rows.
+func rowIDs(rows []Row) []int64 {
+	ids := make([]int64, len(rows))
+	for i, r := range rows {
+		ids[i] = r.ID
+	}
+
+	return ids
+}
+
+// keyOf returns the key of the row stored by storeRows with the given id.
+func keyOf(id int64) *Key {
+	return &Key{TS: at(id * 10), ID: id}
+}
+
+func TestPage(t *testing.T) {
+	ctx := t.Context()
+
+	// twenty returns a store with rows 1 to 20, so id 20 is the newest.
+	twenty := func(t *testing.T) (*Store, *Writer) {
+		t.Helper()
+
+		store, w := newTestStore(t)
+		storeRows(t, w, idRange(1, 20)...)
+
+		return store, w
+	}
+
+	t.Run("an empty store has an empty page", func(t *testing.T) {
+		store, _ := newTestStore(t)
+
+		for _, move := range []int{0, 5, -5} {
+			page, err := store.Page(ctx, PageQuery{Move: move, Limit: 5})
+			require.NoError(t, err)
+			require.Nil(t, page.From)
+			require.Empty(t, page.Rows)
+		}
+	})
+
+	t.Run("starts at the newest row without From", func(t *testing.T) {
+		store, _ := twenty(t)
+
+		page, err := store.Page(
+			ctx,
+			PageQuery{Limit: 5, Keys: []string{"_raw"}},
+		)
+		require.NoError(t, err)
+		require.Nil(t, page.From)
+		require.Equal(t, idRange(20, 16), rowIDs(page.Rows))
+		require.Equal(t, []string{"r"}, page.Rows[0].Values)
+		require.Equal(t, *keyOf(20), page.Rows[0].Key())
+	})
+
+	t.Run("starts at From and keeps it without a move", func(t *testing.T) {
+		store, _ := twenty(t)
+
+		page, err := store.Page(ctx, PageQuery{From: keyOf(10), Limit: 5})
+		require.NoError(t, err)
+		require.Equal(t, keyOf(10), page.From)
+		require.Equal(t, idRange(10, 6), rowIDs(page.Rows))
+	})
+
+	t.Run("rows with equal times order by id", func(t *testing.T) {
+		store, w := newTestStore(t)
+
+		for id := int64(1); id <= 4; id++ {
+			storeRow(t, w, id, at(100))
+		}
+
+		from := &Key{TS: at(100), ID: 3}
+
+		page, err := store.Page(ctx, PageQuery{From: from, Limit: 2})
+		require.NoError(t, err)
+		require.Equal(t, []int64{3, 2}, rowIDs(page.Rows))
+
+		// Row 3 is newer than row 2, though they share a time.
+		page, err = store.Page(ctx, PageQuery{
+			From:  &Key{TS: at(100), ID: 2},
+			Move:  -1,
+			Limit: 2,
+		})
+		require.NoError(t, err)
+		require.Equal(t, from, page.From)
+
+		page, err = store.Page(ctx, PageQuery{From: from, Move: 1, Limit: 2})
+		require.NoError(t, err)
+		require.Equal(t, &Key{TS: at(100), ID: 2}, page.From)
+		require.Equal(t, []int64{2, 1}, rowIDs(page.Rows))
+	})
+
+	t.Run("a page from a key leaves out newer rows added later",
+		func(t *testing.T) {
+			store, w := twenty(t)
+
+			storeRows(t, w, 21, 22)
+
+			page, err := store.Page(ctx, PageQuery{From: keyOf(20), Limit: 5})
+			require.NoError(t, err)
+			require.Equal(t, idRange(20, 16), rowIDs(page.Rows))
+
+			page, err = store.Page(ctx, PageQuery{Limit: 5})
+			require.NoError(t, err)
+			require.Equal(t, idRange(22, 18), rowIDs(page.Rows))
+		})
+
+	t.Run("a late row older than the top shows below it", func(t *testing.T) {
+		store, w := newTestStore(t)
+		storeRows(t, w, idRange(1, 10)...)
+
+		// Row 11 arrives after row 10 but is older than rows 4 and up.
+		storeRow(t, w, 11, at(35))
+
+		page, err := store.Page(ctx, PageQuery{From: keyOf(8), Limit: 6})
+		require.NoError(t, err)
+		require.Equal(t, keyOf(8), page.From)
+		require.Equal(t, []int64{8, 7, 6, 5, 4, 11}, rowIDs(page.Rows))
+	})
+
+	t.Run("Move to older rows", func(t *testing.T) {
+		t.Run("from the newest row", func(t *testing.T) {
+			store, _ := twenty(t)
+
+			page, err := store.Page(ctx, PageQuery{Move: 3, Limit: 5})
+			require.NoError(t, err)
+			require.Equal(t, keyOf(17), page.From)
+			require.Equal(t, idRange(17, 13), rowIDs(page.Rows))
+		})
+
+		t.Run("from a key", func(t *testing.T) {
+			store, _ := twenty(t)
+
+			page, err := store.Page(ctx, PageQuery{
+				From:  keyOf(15),
+				Move:  4,
+				Limit: 5,
+			})
+			require.NoError(t, err)
+			require.Equal(t, keyOf(11), page.From)
+			require.Equal(t, idRange(11, 7), rowIDs(page.Rows))
+		})
+
+		t.Run("stops while the page is full", func(t *testing.T) {
+			store, _ := twenty(t)
+
+			page, err := store.Page(ctx, PageQuery{Move: 100, Limit: 5})
+			require.NoError(t, err)
+			require.Equal(t, keyOf(5), page.From)
+			require.Equal(t, idRange(5, 1), rowIDs(page.Rows))
+
+			// From a key, too.
+			page, err = store.Page(ctx, PageQuery{
+				From:  keyOf(10),
+				Move:  10,
+				Limit: 5,
+			})
+			require.NoError(t, err)
+			require.Equal(t, keyOf(5), page.From)
+		})
+
+		t.Run("keeps From at the end", func(t *testing.T) {
+			store, _ := twenty(t)
+
+			page, err := store.Page(ctx, PageQuery{
+				From:  keyOf(5),
+				Move:  1,
+				Limit: 5,
+			})
+			require.NoError(t, err)
+			require.Equal(t, keyOf(5), page.From)
+			require.Equal(t, idRange(5, 1), rowIDs(page.Rows))
+		})
+
+		t.Run("stays on the newest row of a short table", func(t *testing.T) {
+			store, w := newTestStore(t)
+			storeRows(t, w, 1, 2, 3)
+
+			page, err := store.Page(ctx, PageQuery{Move: 2, Limit: 5})
+			require.NoError(t, err)
+			require.Nil(t, page.From)
+			require.Equal(t, []int64{3, 2, 1}, rowIDs(page.Rows))
+		})
+	})
+
+	t.Run("Move to newer rows", func(t *testing.T) {
+		t.Run(
+			"stays on the newest row from the newest row",
+			func(t *testing.T) {
+				store, _ := twenty(t)
+
+				page, err := store.Page(ctx, PageQuery{Move: -3, Limit: 5})
+				require.NoError(t, err)
+				require.Nil(t, page.From)
+				require.Equal(t, idRange(20, 16), rowIDs(page.Rows))
+			},
+		)
+
+		t.Run("partway returns the key it lands on", func(t *testing.T) {
+			store, _ := twenty(t)
+
+			for move, want := range map[int]int64{-1: 11, -3: 13, -9: 19} {
+				page, err := store.Page(ctx, PageQuery{
+					From:  keyOf(10),
+					Move:  move,
+					Limit: 5,
+				})
+				require.NoError(t, err)
+				require.Equal(t, keyOf(want), page.From, "move %d", move)
+				require.Equal(t, idRange(want, want-4), rowIDs(page.Rows))
+			}
+		})
+
+		t.Run("landing on the newest row follows", func(t *testing.T) {
+			store, _ := twenty(t)
+
+			page, err := store.Page(ctx, PageQuery{
+				From:  keyOf(10),
+				Move:  -10,
+				Limit: 5,
+			})
+			require.NoError(t, err)
+			require.Nil(t, page.From)
+			require.Equal(t, idRange(20, 16), rowIDs(page.Rows))
+		})
+
+		t.Run("passing the newest row follows", func(t *testing.T) {
+			store, _ := twenty(t)
+
+			page, err := store.Page(ctx, PageQuery{
+				From:  keyOf(10),
+				Move:  -50,
+				Limit: 5,
+			})
+			require.NoError(t, err)
+			require.Nil(t, page.From)
+			require.Equal(t, idRange(20, 16), rowIDs(page.Rows))
+		})
+	})
+
+	t.Run("moves by a page and back", func(t *testing.T) {
+		store, _ := twenty(t)
+
+		down, err := store.Page(ctx, PageQuery{Move: 5, Limit: 5})
+		require.NoError(t, err)
+		require.Equal(t, keyOf(15), down.From)
+		require.Equal(t, idRange(15, 11), rowIDs(down.Rows))
+
+		down, err = store.Page(
+			ctx,
+			PageQuery{From: down.From, Move: 5, Limit: 5},
+		)
+		require.NoError(t, err)
+		require.Equal(t, idRange(10, 6), rowIDs(down.Rows))
+
+		up, err := store.Page(
+			ctx,
+			PageQuery{From: down.From, Move: -5, Limit: 5},
+		)
+		require.NoError(t, err)
+		require.Equal(t, keyOf(15), up.From)
+
+		up, err = store.Page(ctx, PageQuery{From: up.From, Move: -5, Limit: 5})
+		require.NoError(t, err)
+		require.Nil(t, up.From, "the last page up reaches the newest row")
+		require.Equal(t, idRange(20, 16), rowIDs(up.Rows))
 	})
 }

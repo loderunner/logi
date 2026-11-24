@@ -1,5 +1,5 @@
-// Package tui is logi's terminal interface: a table of the newest rows and a
-// status bar.
+// Package tui is logi's terminal interface: a table of rows, newest first,
+// and a status bar.
 package tui
 
 import (
@@ -30,13 +30,9 @@ const (
 
 // Rows is where the TUI gets rows to show. *logstore.Store satisfies it.
 type Rows interface {
-	// Newest returns up to limit rows, newest first, each with the value of
-	// every key in keys.
-	Newest(
-		ctx context.Context,
-		limit int,
-		keys []string,
-	) ([]logstore.Row, error)
+	// Page returns a page of rows, newest first, each with the value of every
+	// key in the query.
+	Page(ctx context.Context, q logstore.PageQuery) (logstore.Page, error)
 }
 
 // Options describes the input, for the status bar.
@@ -53,10 +49,10 @@ type ErrMsg struct {
 	Err error
 }
 
-// rowsMsg carries the result of a window query.
-type rowsMsg struct {
+// pageMsg carries the result of a page query.
+type pageMsg struct {
 	gen  int
-	rows []logstore.Row
+	page logstore.Page
 }
 
 type tickMsg time.Time
@@ -82,7 +78,16 @@ type Model struct {
 	timeKey string
 	keys    []string
 
-	// gen numbers window queries. cancel stops the one in flight. A result
+	// from is the key of the top row on screen, or nil while the table
+	// follows the newest row. It comes from the last page and is never
+	// changed in place, so copies of the model share it.
+	from *logstore.Key
+	// move is the number of rows the keys have asked to scroll since the last
+	// page arrived: positive is older, negative is newer. Each query repeats
+	// it, so a query that a newer one replaces loses no key press.
+	move int
+
+	// gen numbers page queries. cancel stops the one in flight. A result
 	// with an older gen is dropped.
 	gen    int
 	cancel context.CancelFunc
@@ -124,6 +129,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m.quit()
+		case "up":
+			return m.scroll(-1)
+		case "down":
+			return m.scroll(1)
+		case "pgup":
+			return m.scroll(-m.height)
+		case "pgdown":
+			return m.scroll(m.height)
 		}
 
 	case tea.WindowSizeMsg:
@@ -142,12 +155,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m.refresh()
 
-	case rowsMsg:
+	case pageMsg:
 		if msg.gen != m.gen {
 			return m, nil
 		}
 
-		m.table = m.table.SetRows(msg.rows)
+		m.from = msg.page.From
+		m.move = 0
+		m.table = m.table.SetRows(msg.page.Rows)
 
 	case tickMsg:
 		m = m.updateRate(time.Time(msg))
@@ -175,7 +190,16 @@ func (m Model) quit() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
-// refresh cancels the in-flight window query and starts a new one.
+// scroll asks to move the view by n rows, positive for older rows, and
+// refreshes the page.
+func (m Model) scroll(n int) (tea.Model, tea.Cmd) {
+	m.move += n
+
+	return m.refresh()
+}
+
+// refresh cancels the in-flight page query and starts a new one from the
+// confirmed top row, with the scrolling not yet confirmed.
 func (m Model) refresh() (tea.Model, tea.Cmd) {
 	if m.cancel != nil {
 		m.cancel()
@@ -193,7 +217,14 @@ func (m Model) refresh() (tea.Model, tea.Cmd) {
 	// The Cmd runs after Update returns, and m.keys may change by then.
 	keys := slices.Clone(m.keys)
 
-	return m, queryRows(ctx, m.source, m.height, keys, m.gen)
+	q := logstore.PageQuery{
+		From:  m.from,
+		Move:  m.move,
+		Limit: m.height,
+		Keys:  keys,
+	}
+
+	return m, queryPage(ctx, m.source, q, m.gen)
 }
 
 // setColumns records newly seen keys and the time key and, when they change
@@ -218,19 +249,18 @@ func (m Model) setColumns(newKeys []string, timeKey string) Model {
 	return m
 }
 
-// queryRows loads the newest limit rows, with a value for each of keys. It
-// reports a failure as an ErrMsg, except when ctx was canceled, which means a
-// newer query replaced it or the program is quitting. The driver may not wrap
-// context.Canceled, so the check is on ctx, not on the error.
-func queryRows(
+// queryPage loads the page q asks for. It reports a failure as an ErrMsg,
+// except when ctx was canceled, which means a newer query replaced it or the
+// program is quitting. The driver may not wrap context.Canceled, so the check
+// is on ctx, not on the error.
+func queryPage(
 	ctx context.Context,
 	source Rows,
-	limit int,
-	keys []string,
+	q logstore.PageQuery,
 	gen int,
 ) tea.Cmd {
 	return func() tea.Msg {
-		rows, err := source.Newest(ctx, limit, keys)
+		page, err := source.Page(ctx, q)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -238,7 +268,7 @@ func queryRows(
 			return ErrMsg{Err: fmt.Errorf("load rows: %w", err)}
 		}
 
-		return rowsMsg{gen: gen, rows: rows}
+		return pageMsg{gen: gen, page: page}
 	}
 }
 
@@ -297,12 +327,23 @@ func (m Model) status() string {
 		formatCount(m.rows) + " rows",
 		formatCount(int64(m.rate+0.5)) + " rows/s",
 		m.progress(),
+		m.follow(),
 	}
 
 	return strings.Join(parts, " · ")
 }
 
 var printer = message.NewPrinter(language.English)
+
+// follow tells whether the view follows the newest row or stays where it was
+// scrolled.
+func (m Model) follow() string {
+	if m.from == nil {
+		return "following"
+	}
+
+	return "paused"
+}
 
 // progress describes how much of the input is loaded.
 func (m Model) progress() string {
