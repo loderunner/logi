@@ -51,12 +51,23 @@ func defaultKeys(known []string, timeKey string) []string {
 
 // messageIndex returns the index in keys of the message key, or -1.
 func messageIndex(keys []string) int {
-	message, ok := findKey(keys, messageKeys)
+	return keyIndex(keys, messageKeys)
+}
+
+// levelIndex returns the index in keys of the level key, or -1.
+func levelIndex(keys []string) int {
+	return keyIndex(keys, levelKeys)
+}
+
+// keyIndex returns the index in keys of the key that matches the earliest
+// candidate, or -1.
+func keyIndex(keys, candidates []string) int {
+	key, ok := findKey(keys, candidates)
 	if !ok {
 		return -1
 	}
 
-	return slices.Index(keys, message)
+	return slices.Index(keys, key)
 }
 
 // findKey returns the key in known that matches the earliest candidate. When

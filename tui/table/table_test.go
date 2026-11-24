@@ -115,6 +115,61 @@ func TestModel(t *testing.T) {
 			require.Equal(t, stamp+"     no level\n"+stamp+"warn", m.View())
 		})
 
+		t.Run("colors the known levels", func(t *testing.T) {
+			m := New().SetSize(80, 5).SetLevelColumn(0).SetRows(cellRows(
+				[]string{"error", "a"},
+				[]string{"WARNING", "b"},
+				[]string{"Info", "c"},
+				[]string{"debug", "d"},
+				[]string{"notice", "e"},
+			))
+
+			// Padding stays outside the color, and the widest level is
+			// "WARNING".
+			want := stamp + "\x1b[38;5;1merror\x1b[m   a\n" +
+				stamp + "\x1b[38;5;3mWARNING\x1b[m b\n" +
+				stamp + "\x1b[38;5;4mInfo\x1b[m    c\n" +
+				stamp + "\x1b[38;5;8mdebug\x1b[m   d\n" +
+				stamp + "notice  e"
+
+			require.Equal(t, want, m.View())
+		})
+
+		t.Run("colors a level that is the last column", func(t *testing.T) {
+			m := New().SetSize(80, 1).SetLevelColumn(1).SetRows(cellRows(
+				[]string{"a", "error"},
+			))
+
+			require.Equal(t, stamp+"a \x1b[38;5;1merror\x1b[m", m.View())
+		})
+
+		t.Run("colors a level that is cut short", func(t *testing.T) {
+			// A quarter of 27 cells caps the level at 6, and the pane has 3
+			// cells left after the timestamp, so "warning" shows as "wa…".
+			m := New().SetSize(27, 1).SetLevelColumn(0).SetRows(cellRows(
+				[]string{"warning", "a"},
+			))
+
+			require.Equal(t, stamp+"wa…", ansi.Strip(m.View()))
+			require.Contains(t, m.View(), "\x1b[38;5;3m")
+		})
+
+		t.Run("doesn't color other columns", func(t *testing.T) {
+			m := New().SetSize(80, 1).SetLevelColumn(1).SetRows(cellRows(
+				[]string{"error", "info"},
+			))
+
+			require.Equal(t, stamp+"error \x1b[38;5;4minfo\x1b[m", m.View())
+		})
+
+		t.Run("doesn't color without a level column", func(t *testing.T) {
+			m := New().SetSize(80, 1).SetRows(cellRows(
+				[]string{"error", "a"},
+			))
+
+			require.Equal(t, stamp+"error a", m.View())
+		})
+
 		t.Run(
 			"a column keeps the widest width it has shown",
 			func(t *testing.T) {
@@ -280,7 +335,10 @@ func TestModel(t *testing.T) {
 		t.Run("replaces escape sequences", func(t *testing.T) {
 			m := New().SetSize(80, 2).SetRows([]logstore.Row{
 				{Raw: "\x1b[31mred\x1b[0m\x07", Values: []string{""}},
-				{Raw: "x", Values: []string{"\x1b[31mred\x07", "\x1b]0;t\x07"}},
+				{
+					Raw:    "x",
+					Values: []string{"\x1b[31mred\x07", "\x1b]0;t\x07"},
+				},
 			})
 			view := m.View()
 

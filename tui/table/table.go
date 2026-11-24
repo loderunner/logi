@@ -42,16 +42,17 @@ type Model struct {
 	// so a column doesn't jump when a short value follows a long one.
 	widths []int
 
-	// message is the index of the message column, or noMessage.
-	message int
+	// message and level are the indexes of the message and level columns, or
+	// noColumn.
+	message, level int
 }
 
-// noMessage is the message index of a table with no message column.
-const noMessage = -1
+// noColumn is the index of a column the table doesn't have.
+const noColumn = -1
 
 // New returns an empty table.
 func New() Model {
-	return Model{message: noMessage}
+	return Model{message: noColumn, level: noColumn}
 }
 
 // SetMessageColumn returns the table treating column i as the message column,
@@ -59,10 +60,22 @@ func New() Model {
 // ResetWidths after it, because the widths depend on the caps.
 func (m Model) SetMessageColumn(i int) Model {
 	if i < 0 {
-		i = noMessage
+		i = noColumn
 	}
 
 	m.message = i
+
+	return m
+}
+
+// SetLevelColumn returns the table coloring the values of column i by log
+// level. Pass a negative i for none.
+func (m Model) SetLevelColumn(i int) Model {
+	if i < 0 {
+		i = noColumn
+	}
+
+	m.level = i
 
 	return m
 }
@@ -179,7 +192,7 @@ func (m Model) writeCells(c *clip, values []string) {
 		value = sanitize(value)
 
 		if i == len(values)-1 {
-			c.value(value)
+			c.value(m.colored(i, value, value))
 			return
 		}
 
@@ -191,10 +204,28 @@ func (m Model) writeCells(c *clip, values []string) {
 		// The widths cover the rows being shown.
 		width := min(m.widths[i], limit)
 		cell := ansi.Truncate(value, width, ellipsis)
+		padding := strings.Repeat(" ", width-ansi.StringWidth(cell))
 
-		c.value(cell)
-		c.gap(strings.Repeat(" ", width-ansi.StringWidth(cell)) + separator)
+		// The color is chosen from the whole value, because a cut one such as
+		// "wa…" no longer names its level. It covers the text, not the padding.
+		c.value(m.colored(i, value, cell))
+		c.gap(padding + separator)
 	}
+}
+
+// colored returns text colored by the log level that value names, when column
+// i is the level column and the level is known. Otherwise it returns text.
+func (m Model) colored(i int, value, text string) string {
+	if i != m.level || text == "" {
+		return text
+	}
+
+	style, ok := levelStyle(value)
+	if !ok {
+		return text
+	}
+
+	return style.Render(text)
 }
 
 // clip writes a line of at most left more cells. Only a value cut short gets
