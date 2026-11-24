@@ -145,7 +145,7 @@ func start(cfg config) (err error) {
 
 	go func() {
 		if cfg.follow {
-			fail(ingest.Follow(ctx, input, lines))
+			fail(ingest.ReadFollow(ctx, input, lines))
 		} else {
 			fail(ingest.ReadAll(ctx, input, lines))
 		}

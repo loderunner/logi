@@ -128,7 +128,7 @@ func TestReadAll(t *testing.T) {
 	})
 }
 
-func TestFollow(t *testing.T) {
+func TestReadFollow(t *testing.T) {
 	// Real file events can't run in a synctest bubble, so these tests wait
 	// for them with require.Eventually.
 	const (
@@ -148,7 +148,7 @@ func TestFollow(t *testing.T) {
 		c := collect(out)
 		errc := make(chan error, 1)
 
-		go func() { errc <- Follow(ctx, f, out) }()
+		go func() { errc <- ReadFollow(ctx, f, out) }()
 
 		stop := func() {
 			cancel()

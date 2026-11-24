@@ -114,13 +114,13 @@ func ReadAll(ctx context.Context, r io.Reader, out chan<- Line) error {
 	}
 }
 
-// Follow sends the lines of f on out, from its current position, then keeps
+// ReadFollow sends the lines of f on out, from its current position, then keeps
 // sending lines as they are appended until ctx ends. It then closes out and
 // returns nil. Rotation and truncation aren't handled.
 //
-// Follow waits for writes with fsnotify. It watches f before the first read,
+// ReadFollow waits for writes with fsnotify. It watches f before the first read,
 // so a write between the last read and the wait isn't missed.
-func Follow(ctx context.Context, f *os.File, out chan<- Line) error {
+func ReadFollow(ctx context.Context, f *os.File, out chan<- Line) error {
 	defer close(out)
 
 	watcher, err := fsnotify.NewWatcher()
