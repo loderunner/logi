@@ -357,7 +357,7 @@ one feature.
 | E1 | `logi -f /tmp/app.log`, `kubectl logs -f … \| logi`, and `go run ./cmd/genlogs >> /tmp/app.log` in another shell | Raw lines in a one-column table, newest at the top, filling while loading. Appended lines arrive. Status bar: rows, rows/s, % loaded or `EOF`, and `following` or `paused`. `q` quits. | Module setup, reader and ingest goroutines, in-memory DuckDB with a fixed memory limit and private temp directory (stale ones cleaned up), Appender batching, `Ingested` messages, bubbletea v2 table querying only the rows on screen, arrival-order `ts`. |
 | E2 | `logi /tmp/app.log` | Real columns: every key, level and message first. Lines that aren't JSON show their raw line across the row. | `jsontext` flattening, a `VARCHAR` column added per new key, `vals` column, detection of level and message keys, a width cap floor for the message column. |
 | E3 | `logi /tmp/app.log` | Rows sorted by their own timestamps, newest on top. Late lines don't move a scrolled view. | Timestamp detection and parsing, `ts` from the line with arrival time as fallback, keyset scrolling on `(ts, id)`, follow while at the top. |
-| E4 | `LOGI_TIME_FIELD=time logi --memory-limit 512MB /tmp/app.log` and `logi --help` | Flags, environment and config files all take effect, in precedence order. | `config/` with viper and pflag, `--config`, `--time-field`, `--memory-limit`, writing a single key back to the selected file. |
+| E4 | `LOGI_TIME_FIELD=time logi --memory-limit 512MB /tmp/app.log` and `logi --help` | Flags, environment and config files all take effect, in precedence order. | `config/` with viper and pflag, `--config`, `--time-field`, `--memory-limit`. |
 
 ### Features
 
@@ -378,7 +378,7 @@ one feature.
 | F13 | `=` jumps back to the live edge and follows. Panning away stops following. | Pinned and unpinned states, linked to table follow. |
 | F14 | `c` opens a column picker, with "All keys" and every key checked. Unchecking a key hides its column, and new keys then stay hidden. | `tui/picker`, "All keys" entry, list of known keys with type-to-narrow search. |
 | F15 | Adding columns past the screen width makes the table scroll: `←`/`→` by one column, Home/End to the first or last. The timestamp stays put, and `‹`/`›` in the header show hidden columns. | Column offset with clamping, timestamp pinned first behind `│`, header markers, the next column cut off at the right edge, the 18-cell local timestamp, `↵` for newlines. |
-| F16 | Columns are remembered on the next run, including with another file. Keys missing from that file stay hidden until they appear. | `columns` written to and read from the config file: unset for "All keys", the shown keys for a list, `[]` for none. |
+| F16 | Columns are remembered on the next run, including with another file. Keys missing from that file stay hidden until they appear. | `columns` written to and read from the config file: unset for "All keys", the shown keys for a list, `[]` for none. Writing a single key back to the selected config file. |
 | F17 | Ctrl+X in the picker restores the default columns. | Reset to "All keys", plus removing `columns` from the config file. |
 | F18 | Enter on the table header flips newest at the top or the bottom, with `▼`/`▲` on the timestamp header, and it's remembered. | Order toggle, follow at either end, persisted. |
 | F19 | Ctrl+G, Ctrl+F and Ctrl+T hide and show the panes, and it's remembered. `/` brings the filter back. | Pane visibility in the config file, layout reflow, Ctrl+F removed from the text input's key map. |

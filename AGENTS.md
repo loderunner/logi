@@ -10,8 +10,9 @@ deliverables (E1, E2…).
 ## Layout
 
 ```
-main.go                 wiring: store, reader, ingest, TUI
+main.go                 wiring: config, store, reader, ingest, TUI
 scripts/setup.sh        sets up a Linux dev machine (the cloud environment runs it)
+config/                 flags, LOGI_ variables and the JSON config file
 cmd/genlogs/            streams synthetic logs to stdout, or writes a sized batch
 logstore/               the only package that writes SQL (DuckDB)
 ingest/                 reads lines (file, stdin) and appends them to the store
