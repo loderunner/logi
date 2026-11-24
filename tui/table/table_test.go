@@ -34,6 +34,25 @@ func cellRows(cells ...[]string) []logstore.Row {
 	return rows
 }
 
+// shown returns the view without styling, and without the padding that fills
+// each line. Tests that check styling use View instead.
+func shown(m Model) string {
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	for i, line := range lines {
+		lines[i] = strings.TrimRight(line, " ")
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// belowTop returns the view without its top line, which is the selected row,
+// and so without the reverse video that would hide the other styling.
+func belowTop(m Model) string {
+	_, rest, _ := strings.Cut(m.View(), "\n")
+
+	return rest
+}
+
 func TestModel(t *testing.T) {
 	t.Run("View", func(t *testing.T) {
 		t.Run(
@@ -44,7 +63,7 @@ func TestModel(t *testing.T) {
 				require.Equal(
 					t,
 					stamp+"newest\n"+stamp+"older\n\n",
-					m.View(),
+					shown(m),
 				)
 			},
 		)
@@ -66,7 +85,7 @@ func TestModel(t *testing.T) {
 
 				m := New().SetSize(60, 1).SetRows(rows)
 
-				require.Equal(t, "2026-03-04 05:06:07.089 x", m.View())
+				require.Equal(t, "2026-03-04 05:06:07.089 x", shown(m))
 			},
 		)
 
@@ -78,7 +97,7 @@ func TestModel(t *testing.T) {
 
 			m := New().SetSize(60, 1).SetRows(rows)
 
-			require.Equal(t, "2026-03-04 05:06:07.000 x", m.View())
+			require.Equal(t, "2026-03-04 05:06:07.000 x", shown(m))
 		})
 
 		t.Run("shows the cells in columns", func(t *testing.T) {
@@ -90,7 +109,7 @@ func TestModel(t *testing.T) {
 			require.Equal(
 				t,
 				stamp+"info  started\n"+stamp+"error failed to connect\n",
-				m.View(),
+				shown(m),
 			)
 		})
 
@@ -102,7 +121,7 @@ func TestModel(t *testing.T) {
 					[]string{"", ""},
 				))
 
-				require.Equal(t, stamp+"info started\n"+stamp+"raw", m.View())
+				require.Equal(t, stamp+"info started\n"+stamp+"raw", shown(m))
 			},
 		)
 
@@ -112,11 +131,12 @@ func TestModel(t *testing.T) {
 				[]string{"warn", ""},
 			))
 
-			require.Equal(t, stamp+"     no level\n"+stamp+"warn", m.View())
+			require.Equal(t, stamp+"     no level\n"+stamp+"warn", shown(m))
 		})
 
 		t.Run("colors the known levels", func(t *testing.T) {
-			m := New().SetSize(80, 5).SetLevelColumn(0).SetRows(cellRows(
+			m := New().SetSize(80, 6).SetLevelColumn(0).SetRows(cellRows(
+				[]string{"top", "-"},
 				[]string{"error", "a"},
 				[]string{"WARNING", "b"},
 				[]string{"Info", "c"},
@@ -132,34 +152,41 @@ func TestModel(t *testing.T) {
 				stamp + "\x1b[38;5;8mdebug\x1b[m   d\n" +
 				stamp + "notice  e"
 
-			require.Equal(t, want, m.View())
+			require.Equal(t, want, belowTop(m))
 		})
 
 		t.Run("colors a level that is the last column", func(t *testing.T) {
-			m := New().SetSize(80, 1).SetLevelColumn(1).SetRows(cellRows(
+			m := New().SetSize(80, 2).SetLevelColumn(1).SetRows(cellRows(
+				[]string{"top", "-"},
 				[]string{"a", "error"},
 			))
 
-			require.Equal(t, stamp+"a \x1b[38;5;1merror\x1b[m", m.View())
+			require.Equal(t, stamp+"a   \x1b[38;5;1merror\x1b[m", belowTop(m))
 		})
 
 		t.Run("colors a level that is cut short", func(t *testing.T) {
 			// A quarter of 27 cells caps the level at 6, and the pane has 3
 			// cells left after the timestamp, so "warning" shows as "wa…".
-			m := New().SetSize(27, 1).SetLevelColumn(0).SetRows(cellRows(
+			m := New().SetSize(27, 2).SetLevelColumn(0).SetRows(cellRows(
+				[]string{"top", "-"},
 				[]string{"warning", "a"},
 			))
 
-			require.Equal(t, stamp+"wa…", ansi.Strip(m.View()))
-			require.Contains(t, m.View(), "\x1b[38;5;3m")
+			require.Equal(t, stamp+"wa…", ansi.Strip(belowTop(m)))
+			require.Contains(t, belowTop(m), "\x1b[38;5;3m")
 		})
 
 		t.Run("doesn't color other columns", func(t *testing.T) {
-			m := New().SetSize(80, 1).SetLevelColumn(1).SetRows(cellRows(
+			m := New().SetSize(80, 2).SetLevelColumn(1).SetRows(cellRows(
+				[]string{"top", "-"},
 				[]string{"error", "info"},
 			))
 
-			require.Equal(t, stamp+"error \x1b[38;5;4minfo\x1b[m", m.View())
+			require.Equal(
+				t,
+				stamp+"error \x1b[38;5;4minfo\x1b[m",
+				belowTop(m),
+			)
 		})
 
 		t.Run("doesn't color without a level column", func(t *testing.T) {
@@ -167,7 +194,7 @@ func TestModel(t *testing.T) {
 				[]string{"error", "a"},
 			))
 
-			require.Equal(t, stamp+"error a", m.View())
+			require.Equal(t, stamp+"error a", shown(m))
 		})
 
 		t.Run(
@@ -178,7 +205,7 @@ func TestModel(t *testing.T) {
 				m = m.SetRows(cellRows([]string{"error", "a"}))
 				m = m.SetRows(cellRows([]string{"info", "b"}))
 
-				require.Equal(t, stamp+"info  b", m.View())
+				require.Equal(t, stamp+"info  b", shown(m))
 			},
 		)
 
@@ -189,7 +216,7 @@ func TestModel(t *testing.T) {
 			m = m.SetRows(cellRows([]string{"info", "b"}))
 			m = m.ResetWidths()
 
-			require.Equal(t, stamp+"info b", m.View())
+			require.Equal(t, stamp+"info b", shown(m))
 		})
 
 		t.Run("raw rows don't widen columns", func(t *testing.T) {
@@ -201,7 +228,7 @@ func TestModel(t *testing.T) {
 			require.Equal(
 				t,
 				stamp+"info a\n"+stamp+"a very long raw line",
-				m.View(),
+				shown(m),
 			)
 		})
 
@@ -211,7 +238,7 @@ func TestModel(t *testing.T) {
 			))
 
 			// The quarter of 40 is 10 cells.
-			require.Equal(t, stamp+"012345678… end", m.View())
+			require.Equal(t, stamp+"012345678… end", shown(m))
 		})
 
 		t.Run("the message column's cap has a floor", func(t *testing.T) {
@@ -225,12 +252,12 @@ func TestModel(t *testing.T) {
 			require.Equal(
 				t,
 				stamp+strings.Repeat("m", 24)+"… end",
-				plain.View(),
+				shown(plain),
 			)
 			require.Equal(
 				t,
 				stamp+strings.Repeat("m", 39)+"… end",
-				message.View(),
+				shown(message),
 			)
 		})
 
@@ -245,7 +272,7 @@ func TestModel(t *testing.T) {
 				require.Equal(
 					t,
 					stamp+strings.Repeat("m", 49)+"… end",
-					m.View(),
+					shown(m),
 				)
 			},
 		)
@@ -255,7 +282,7 @@ func TestModel(t *testing.T) {
 				[]string{"x", "0123456789abc"},
 			))
 
-			view := m.View()
+			view := shown(m)
 
 			require.Equal(t, stamp+"x 0123456…", view)
 			require.Equal(t, len(stamp)+10, ansi.StringWidth(view))
@@ -273,9 +300,9 @@ func TestModel(t *testing.T) {
 					require.Equal(
 						t,
 						stamp+"ab",
-						strings.TrimRight(m.View(), " "),
+						strings.TrimRight(shown(m), " "),
 					)
-					require.NotContains(t, m.View(), ellipsis)
+					require.NotContains(t, shown(m), ellipsis)
 				}
 			},
 		)
@@ -287,7 +314,7 @@ func TestModel(t *testing.T) {
 					[]string{"ab", "cd", "ef"},
 				))
 
-				require.Equal(t, stamp+"ab cd", m.View())
+				require.Equal(t, stamp+"ab cd", shown(m))
 			},
 		)
 
@@ -298,38 +325,38 @@ func TestModel(t *testing.T) {
 					[]string{"ab", "cdef", "gh"},
 				))
 
-				require.Equal(t, stamp+"ab …", m.View())
+				require.Equal(t, stamp+"ab …", shown(m))
 			},
 		)
 
 		t.Run("cuts lines to the width", func(t *testing.T) {
 			m := New().SetSize(len(stamp)+8, 1).SetRows(rawRows("0123456789"))
 
-			require.Equal(t, stamp+"0123456…", m.View())
+			require.Equal(t, stamp+"0123456…", shown(m))
 		})
 
 		t.Run("cuts a narrow pane inside the timestamp", func(t *testing.T) {
 			m := New().SetSize(10, 1).SetRows(rawRows("x"))
 
-			require.Equal(t, "0001-01-0…", m.View())
+			require.Equal(t, "0001-01-0…", shown(m))
 		})
 
 		t.Run("cuts wide characters by cells", func(t *testing.T) {
 			m := New().SetSize(len(stamp)+5, 1).SetRows(rawRows("日本語日本語"))
 
-			require.Equal(t, stamp+"日本…", m.View())
+			require.Equal(t, stamp+"日本…", shown(m))
 		})
 
 		t.Run("ignores rows past the height", func(t *testing.T) {
 			m := New().SetSize(60, 2).SetRows(rawRows("a", "b", "c"))
 
-			require.Equal(t, stamp+"a\n"+stamp+"b", m.View())
+			require.Equal(t, stamp+"a\n"+stamp+"b", shown(m))
 		})
 
 		t.Run("is empty without a size", func(t *testing.T) {
 			m := New().SetRows(rawRows("a"))
 
-			require.Empty(t, m.View())
+			require.Empty(t, shown(m))
 		})
 
 		t.Run("replaces escape sequences", func(t *testing.T) {
@@ -340,7 +367,7 @@ func TestModel(t *testing.T) {
 					Values: []string{"\x1b[31mred\x07", "\x1b]0;t\x07"},
 				},
 			})
-			view := m.View()
+			view := shown(m)
 
 			require.NotContains(t, view, "\x1b")
 			require.NotContains(t, view, "\x07")
@@ -355,13 +382,71 @@ func TestModel(t *testing.T) {
 			m := New().SetSize(80, 1).
 				SetRows(cellRows([]string{"a\u009bb\xffc"}))
 
-			require.Equal(t, stamp+"a�b�c", m.View())
+			require.Equal(t, stamp+"a�b�c", shown(m))
 		})
 
 		t.Run("replaces tabs with spaces", func(t *testing.T) {
 			m := New().SetSize(80, 1).SetRows(cellRows([]string{"a\tb"}))
 
-			require.Equal(t, stamp+"a"+strings.Repeat(" ", 4)+"b", m.View())
+			require.Equal(t, stamp+"a"+strings.Repeat(" ", 4)+"b", shown(m))
+		})
+	})
+
+	t.Run("Selected", func(t *testing.T) {
+		t.Run("is the top row", func(t *testing.T) {
+			m := New().SetSize(60, 2).SetRows(rawRows("newest", "older"))
+
+			row, ok := m.Selected()
+
+			require.True(t, ok)
+			require.Equal(t, "newest", row.Raw)
+		})
+
+		t.Run("is none when the table is empty", func(t *testing.T) {
+			m := New().SetSize(60, 2)
+
+			_, ok := m.Selected()
+
+			require.False(t, ok)
+		})
+	})
+
+	t.Run("selected row", func(t *testing.T) {
+		t.Run("is in reverse video, padded to the width", func(t *testing.T) {
+			m := New().SetSize(40, 2).SetRows(rawRows("newest", "older"))
+
+			top, below, _ := strings.Cut(m.View(), "\n")
+
+			require.Equal(
+				t,
+				"\x1b[7m"+stamp+"newest"+strings.Repeat(" ", 40-len(stamp)-6)+
+					"\x1b[m",
+				top,
+			)
+			require.Equal(t, stamp+"older", below)
+		})
+
+		t.Run("is padded to the width when cut", func(t *testing.T) {
+			m := New().SetSize(len(stamp)+4, 1).SetRows(rawRows("0123456789"))
+
+			require.Equal(t, "\x1b[7m"+stamp+"012…\x1b[m", m.View())
+		})
+
+		t.Run("has no level color", func(t *testing.T) {
+			m := New().SetSize(40, 2).SetLevelColumn(0).SetRows(cellRows(
+				[]string{"error", "a"},
+				[]string{"error", "b"},
+			))
+
+			top, below, _ := strings.Cut(m.View(), "\n")
+
+			require.Equal(
+				t,
+				"\x1b[7m"+stamp+"error a"+strings.Repeat(" ", 40-len(stamp)-7)+
+					"\x1b[m",
+				top,
+			)
+			require.Equal(t, stamp+"\x1b[38;5;1merror\x1b[m b", below)
 		})
 	})
 
@@ -378,7 +463,7 @@ func TestModel(t *testing.T) {
 			m := New().SetSize(80, 1).SetRows(cellRows([]string{"a", "b"}))
 			_ = m.SetRows(cellRows([]string{"wide value", "b"}))
 
-			require.Equal(t, stamp+"a b", m.View())
+			require.Equal(t, stamp+"a b", shown(m))
 		})
 	})
 }

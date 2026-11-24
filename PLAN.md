@@ -184,6 +184,7 @@ the same ingest path for both:
 
 - **Table**
   - A header row shows the column names, cut with `…` to the column width.
+  - The top row is the selected row, in reverse video.
   - Sorted by `(ts, id)`, newest at the top by default. The timestamp
     header shows `▼` or `▲`.
   - The header row is a focus stop. Enter on it flips newest at the top or

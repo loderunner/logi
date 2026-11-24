@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode"
 
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/loderunner/logi/logstore"
@@ -29,8 +30,11 @@ const (
 	minMessageCap = 40
 )
 
+// selectedStyle draws the selected row.
+var selectedStyle = lipgloss.NewStyle().Reverse(true)
+
 // Model is the table pane. It holds the rows to show, newest first, and the
-// size of the pane.
+// size of the pane. The top row is the selected row.
 //
 // A row's Values are its cells after the timestamp. When all of them are
 // empty, the row shows its Raw line across those columns instead, which
@@ -152,8 +156,18 @@ func showsRaw(row logstore.Row) bool {
 	return true
 }
 
+// Selected returns the selected row, which is the top one, and false when the
+// table is empty.
+func (m Model) Selected() (logstore.Row, bool) {
+	if len(m.rows) == 0 {
+		return logstore.Row{}, false
+	}
+
+	return m.rows[0], true
+}
+
 // View renders one line per row, cut to the width, then blank lines up to the
-// height.
+// height. The selected row is in reverse video across the whole width.
 func (m Model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
@@ -167,7 +181,21 @@ func (m Model) View() string {
 		}
 	}
 
+	if len(m.rows) > 0 {
+		lines[0] = m.selectedLine(m.rows[0])
+	}
+
 	return strings.Join(lines, "\n")
+}
+
+// selectedLine renders the selected row. It has no level color, because the
+// color's reset would end the reverse video partway through the line.
+func (m Model) selectedLine(row logstore.Row) string {
+	m.level = noColumn
+	line := m.line(row)
+	padding := strings.Repeat(" ", m.width-ansi.StringWidth(line))
+
+	return selectedStyle.Render(line + padding)
 }
 
 // line renders one row, cut to the width.
