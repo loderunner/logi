@@ -11,6 +11,7 @@ package ingest_mock
 
 import (
 	reflect "reflect"
+	time "time"
 
 	gomock "go.uber.org/mock/gomock"
 )
@@ -40,7 +41,7 @@ func (m *MockAppender) EXPECT() *MockAppenderMockRecorder {
 }
 
 // Append mocks base method.
-func (m *MockAppender) Append(id, ts int64, raw, vals string, fields map[string]string) error {
+func (m *MockAppender) Append(id int64, ts time.Time, raw, vals string, fields map[string]string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Append", id, ts, raw, vals, fields)
 	ret0, _ := ret[0].(error)
@@ -66,4 +67,18 @@ func (m *MockAppender) Flush() ([]string, error) {
 func (mr *MockAppenderMockRecorder) Flush() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Flush", reflect.TypeOf((*MockAppender)(nil).Flush))
+}
+
+// Restamp mocks base method.
+func (m *MockAppender) Restamp(beforeID int64, ts time.Time) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Restamp", beforeID, ts)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Restamp indicates an expected call of Restamp.
+func (mr *MockAppenderMockRecorder) Restamp(beforeID, ts any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Restamp", reflect.TypeOf((*MockAppender)(nil).Restamp), beforeID, ts)
 }

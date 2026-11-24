@@ -7,8 +7,8 @@ import (
 	"github.com/loderunner/logi/ingest"
 )
 
-// Candidate keys for the leading default columns, by priority. A key matches without
-// regard to case.
+// Candidate keys for the leading default columns, by priority. A key matches
+// without regard to case.
 var (
 	levelKeys = []string{
 		"level", "lvl", "severity", "loglevel", "log_level", "levelname",
@@ -19,11 +19,12 @@ var (
 // defaultKeys returns the keys of the columns after the timestamp: the level
 // key and the message key, when found among known, then every other known key
 // in order of appearance. The raw line isn't a column, because the table shows
-// it across a row with no value in any column. When no other key is known, the
-// raw line is the only column.
-func defaultKeys(known []string) []string {
+// it across a row with no value in any column. Neither is timeKey, the field
+// the timestamp came from, which would repeat the first column. When no other
+// key is known, the raw line is the only column.
+func defaultKeys(known []string, timeKey string) []string {
 	known = slices.DeleteFunc(slices.Clone(known), func(key string) bool {
-		return key == ingest.RawKey
+		return key == ingest.RawKey || (timeKey != "" && key == timeKey)
 	})
 	if len(known) == 0 {
 		return []string{ingest.RawKey}

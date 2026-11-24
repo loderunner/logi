@@ -13,6 +13,19 @@ import (
 	ingest_mock "github.com/loderunner/logi/ingest/mock_"
 )
 
+// timeIs matches a time.Time that is the same instant as want.
+type timeIs time.Time
+
+func (m timeIs) Matches(x any) bool {
+	t, ok := x.(time.Time)
+
+	return ok && time.Time(m).Equal(t)
+}
+
+func (m timeIs) String() string {
+	return "is the instant " + time.Time(m).Format(time.RFC3339Nano)
+}
+
 func TestRun(t *testing.T) {
 	// start runs Run in the bubble and returns what it reports.
 	type harness struct {
@@ -185,8 +198,9 @@ func TestRun(t *testing.T) {
 	t.Run("assigns increasing ids and arrival times", func(t *testing.T) {
 		synctest.Test(t, func(t *testing.T) {
 			type row struct {
-				id, ts int64
-				raw    string
+				id  int64
+				ts  time.Time
+				raw string
 			}
 
 			var rows []row
@@ -195,7 +209,7 @@ func TestRun(t *testing.T) {
 			mockAppender := ingest_mock.NewMockAppender(ctrl)
 			mockAppender.EXPECT().
 				Append(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-				DoAndReturn(func(id, ts int64, raw, _ string, _ map[string]string) error {
+				DoAndReturn(func(id int64, ts time.Time, raw, _ string, _ map[string]string) error {
 					rows = append(rows, row{id, ts, raw})
 					return nil
 				}).
@@ -221,8 +235,8 @@ func TestRun(t *testing.T) {
 
 			require.Equal(t, "a", rows[0].raw)
 			require.Equal(t, "c", rows[2].raw)
-			require.Equal(t, int64(time.Millisecond), rows[1].ts-rows[0].ts)
-			require.GreaterOrEqual(t, rows[2].ts, rows[1].ts)
+			require.Equal(t, time.Millisecond, rows[1].ts.Sub(rows[0].ts))
+			require.False(t, rows[2].ts.Before(rows[1].ts))
 		})
 	})
 
@@ -327,6 +341,154 @@ func TestRun(t *testing.T) {
 			h := start(t, mockAppender)
 			h.lines <- Line{Text: []byte("x"), End: 2}
 			close(h.lines)
+
+			err := <-h.done
+			require.ErrorIs(t, err, boom)
+		})
+	})
+
+	t.Run("stamps rows with the time field", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			first := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+			second := first.Add(time.Second)
+
+			ctrl := gomock.NewController(t)
+			mockAppender := ingest_mock.NewMockAppender(ctrl)
+			gomock.InOrder(
+				mockAppender.EXPECT().
+					Append(int64(1), timeIs(first), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(nil),
+				mockAppender.EXPECT().
+					Append(int64(2), timeIs(second), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(nil),
+				// A row with no time takes the previous row's.
+				mockAppender.EXPECT().
+					Append(int64(3), timeIs(second), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(nil),
+			)
+			mockAppender.EXPECT().Flush().Return(nil, nil)
+
+			h := start(t, mockAppender)
+			h.lines <- Line{Text: []byte(`{"time":"2024-01-02T03:04:05Z"}`), End: 1}
+			h.lines <- Line{Text: []byte(`{"time":1704164646}`), End: 2}
+			h.lines <- Line{Text: []byte("oops"), End: 3}
+			close(h.lines)
+
+			err := <-h.done
+			require.NoError(t, err)
+		})
+	})
+
+	t.Run("restamps the earlier rows once when the time field is found",
+		func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				first := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+
+				ctrl := gomock.NewController(t)
+				mockAppender := ingest_mock.NewMockAppender(ctrl)
+				gomock.InOrder(
+					mockAppender.EXPECT().
+						Append(int64(1), gomock.Any(), "banner", gomock.Any(), gomock.Any()).
+						Return(nil),
+					mockAppender.EXPECT().
+						Append(int64(2), gomock.Any(), "not json either", gomock.Any(), gomock.Any()).
+						Return(nil),
+					// Before the row that has the time, so that its ts is the
+					// one the earlier rows get.
+					mockAppender.EXPECT().
+						Restamp(int64(3), timeIs(first)).
+						Return(nil),
+					mockAppender.EXPECT().
+						Append(int64(3), timeIs(first), gomock.Any(), gomock.Any(), gomock.Any()).
+						Return(nil),
+					mockAppender.EXPECT().
+						Append(int64(4), timeIs(first.Add(time.Second)), gomock.Any(), gomock.Any(), gomock.Any()).
+						Return(nil),
+					mockAppender.EXPECT().Flush().Return(nil, nil),
+				)
+
+				h := start(t, mockAppender)
+				h.lines <- Line{Text: []byte("banner"), End: 1}
+				h.lines <- Line{Text: []byte("not json either"), End: 2}
+				h.lines <- Line{Text: []byte(`{"time":"2024-01-02T03:04:05Z"}`), End: 3}
+				h.lines <- Line{Text: []byte(`{"time":"2024-01-02T03:04:06Z"}`), End: 4}
+				close(h.lines)
+
+				err := <-h.done
+				require.NoError(t, err)
+			})
+		},
+	)
+
+	t.Run("does not restamp when the first row has a time", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			// No Restamp expectation: a call fails the test.
+			mockAppender := ingest_mock.NewMockAppender(ctrl)
+			mockAppender.EXPECT().
+				Append(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(nil).
+				Times(2)
+			mockAppender.EXPECT().Flush().Return(nil, nil)
+
+			h := start(t, mockAppender)
+			h.lines <- Line{Text: []byte(`{"ts":1704164645}`), End: 1}
+			h.lines <- Line{Text: []byte(`{"ts":1704164646}`), End: 2}
+			close(h.lines)
+
+			err := <-h.done
+			require.NoError(t, err)
+		})
+	})
+
+	t.Run("reports the time key once it is found", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockAppender := ingest_mock.NewMockAppender(ctrl)
+			mockAppender.EXPECT().
+				Append(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(nil).
+				Times(3)
+			mockAppender.EXPECT().Restamp(int64(2), gomock.Any()).Return(nil)
+			mockAppender.EXPECT().Flush().Return(nil, nil).Times(3)
+
+			h := start(t, mockAppender)
+			h.lines <- Line{Text: []byte("banner"), End: 1}
+
+			synctest.Sleep(flushInterval)
+
+			h.lines <- Line{Text: []byte(`{"@timestamp":"2024-01-02T03:04:05Z"}`), End: 2}
+
+			synctest.Sleep(flushInterval)
+
+			h.lines <- Line{Text: []byte("oops"), End: 3}
+			close(h.lines)
+
+			err := <-h.done
+			require.NoError(t, err)
+			require.Equal(t, []Ingested{
+				{Rows: 1, Bytes: 1},
+				{Rows: 2, Bytes: 2, TimeKey: "@timestamp"},
+				{Rows: 3, Bytes: 3, TimeKey: "@timestamp"},
+				{Rows: 3, Bytes: 3, TimeKey: "@timestamp", EOF: true},
+			}, *h.notified)
+		})
+	})
+
+	t.Run("returns a restamp error", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			boom := errors.New("boom")
+			mockAppender := ingest_mock.NewMockAppender(ctrl)
+			mockAppender.EXPECT().
+				Append(int64(1), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+				Return(nil)
+			mockAppender.EXPECT().Restamp(int64(2), gomock.Any()).Return(boom)
+			mockAppender.EXPECT().Flush().Return(nil, nil).AnyTimes()
+
+			h := start(t, mockAppender)
+			h.lines <- Line{Text: []byte("banner"), End: 1}
+			h.lines <- Line{Text: []byte(`{"time":"2024-01-02T03:04:05Z"}`), End: 2}
 
 			err := <-h.done
 			require.ErrorIs(t, err, boom)

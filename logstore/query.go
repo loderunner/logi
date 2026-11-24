@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Row is one stored log line.
 type Row struct {
 	ID  int64
-	TS  int64
+	TS  time.Time
 	Raw string
 	// Values holds the value of each key passed to Newest, in the same order.
 	// A key the row has no value for, or the store has never seen, has "".
@@ -54,7 +55,9 @@ func (s *Store) Newest(
 		r := Row{Values: make([]string, len(keys))}
 
 		dest := make([]any, 0, 3+len(keys))
-		dest = append(dest, &r.ID, &r.TS, &r.Raw)
+		var ts int64
+
+		dest = append(dest, &r.ID, &ts, &r.Raw)
 
 		for i := range r.Values {
 			dest = append(dest, &r.Values[i])
@@ -65,6 +68,7 @@ func (s *Store) Newest(
 			return nil, fmt.Errorf("scan row: %w", err)
 		}
 
+		r.TS = time.Unix(0, ts).UTC()
 		result = append(result, r)
 	}
 

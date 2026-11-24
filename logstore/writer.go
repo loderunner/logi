@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/duckdb/duckdb-go/v2"
 )
@@ -80,8 +81,12 @@ func (w *Writer) openAppender() error {
 // Append adds a row with the value of each key in fields. A key that no row
 // has had before gets a new column, and earlier rows have no value for it.
 // The row isn't visible to queries until Flush.
+//
+// ts is stored as Unix nanoseconds, so it must be between the years 1678 and
+// 2262.
 func (w *Writer) Append(
-	id, ts int64,
+	id int64,
+	ts time.Time,
 	raw, vals string,
 	fields map[string]string,
 ) error {
@@ -91,7 +96,7 @@ func (w *Writer) Append(
 	}
 
 	w.row = w.row[:0]
-	w.row = append(w.row, id, ts, validUTF8(raw), validUTF8(vals))
+	w.row = append(w.row, id, ts.UnixNano(), validUTF8(raw), validUTF8(vals))
 
 	for range w.keys {
 		w.row = append(w.row, nil)
@@ -162,6 +167,30 @@ func (w *Writer) addColumns(fields map[string]string) error {
 	}
 
 	return w.openAppender()
+}
+
+// Restamp sets ts on every row with an id below beforeID, including rows
+// appended but not yet flushed. The constraint on ts is the same as for
+// Append.
+func (w *Writer) Restamp(beforeID int64, ts time.Time) error {
+	// The UPDATE only sees flushed rows. It doesn't take Flush's job of
+	// reporting the added keys, so it leaves them for the next Flush.
+	err := w.app.Flush()
+	if err != nil {
+		return fmt.Errorf("flush appender: %w", err)
+	}
+
+	_, err = w.conn.ExecContext(
+		context.Background(),
+		"UPDATE logs SET ts = ? WHERE id < ?",
+		ts.UnixNano(),
+		beforeID,
+	)
+	if err != nil {
+		return fmt.Errorf("update ts: %w", err)
+	}
+
+	return nil
 }
 
 // Flush makes the appended rows visible to queries. It returns the keys that

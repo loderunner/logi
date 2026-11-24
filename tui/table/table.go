@@ -4,7 +4,6 @@ package table
 
 import (
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
@@ -160,7 +159,7 @@ func (m Model) View() string {
 func (m Model) line(row logstore.Row) string {
 	c := clip{left: m.width}
 
-	c.value(time.Unix(0, row.TS).UTC().Format(timeLayout))
+	c.value(row.TS.UTC().Format(timeLayout))
 	c.gap(separator)
 
 	if showsRaw(row) {

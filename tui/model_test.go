@@ -56,7 +56,7 @@ func TestModel(t *testing.T) {
 				require.Contains(
 					t,
 					m.View().Content,
-					"1970-01-01 00:00:00.000 newer\n1970-01-01 00:00:00.000 older",
+					"0001-01-01 00:00:00.000 newer\n0001-01-01 00:00:00.000 older",
 				)
 			},
 		)
@@ -108,6 +108,99 @@ func TestModel(t *testing.T) {
 			require.Equal(t, []string{"LVL", "Msg", "a", "b"}, m.keys)
 			require.Equal(t, []string{"a", "Msg", "b", "LVL"}, m.known)
 		})
+
+		t.Run(
+			"keeps the time key out of the default columns",
+			func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				mockRows := tui_mock.NewMockRows(ctrl)
+				mockRows.EXPECT().
+					Newest(gomock.Any(), gomock.Any(), []string{"level", "msg", "a"}).
+					Return(nil, nil)
+
+				m := New(mockRows, Options{FileSize: 100})
+				m, _ = update(t, m, size)
+				m, cmd := update(t, m, ingest.Ingested{
+					Rows:    1,
+					NewKeys: []string{"time", "a", "msg", "level"},
+					TimeKey: "time",
+				})
+				cmd()
+
+				require.Equal(t, []string{"level", "msg", "a"}, m.keys)
+				require.Equal(t, []string{"time", "a", "msg", "level"}, m.known)
+			},
+		)
+
+		t.Run("shows the raw line when the time key is the only key",
+			func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				mockRows := tui_mock.NewMockRows(ctrl)
+				mockRows.EXPECT().
+					Newest(gomock.Any(), gomock.Any(), []string{"_raw"}).
+					Return(nil, nil)
+
+				m := New(mockRows, Options{FileSize: 100})
+				m, _ = update(t, m, size)
+				m, cmd := update(t, m, ingest.Ingested{
+					Rows:    1,
+					NewKeys: []string{"time"},
+					TimeKey: "time",
+				})
+				cmd()
+
+				require.Equal(t, []string{"_raw"}, m.keys)
+			},
+		)
+
+		t.Run("updates the columns when the time key arrives after the keys",
+			func(t *testing.T) {
+				ctrl := gomock.NewController(t)
+				mockRows := tui_mock.NewMockRows(ctrl)
+
+				var asked [][]string
+
+				mockRows.EXPECT().
+					Newest(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, _ int, keys []string) ([]logstore.Row, error) {
+						asked = append(asked, keys)
+						return nil, nil
+					}).
+					Times(3)
+
+				m := New(mockRows, Options{FileSize: 100})
+				m, _ = update(t, m, size)
+
+				// The first lines have no time, so the report has no time key
+				// yet and the key still shows.
+				m, cmd := update(t, m, ingest.Ingested{
+					Rows:    1,
+					NewKeys: []string{"time", "msg"},
+				})
+				cmd()
+				require.Equal(t, []string{"msg", "time"}, m.keys)
+
+				// A report that adds no key still changes the columns.
+				m, cmd = update(t, m, ingest.Ingested{
+					Rows:    2,
+					TimeKey: "time",
+				})
+				cmd()
+				require.Equal(t, []string{"msg"}, m.keys)
+
+				// Later reports keep carrying the time key.
+				m, cmd = update(t, m, ingest.Ingested{
+					Rows:    3,
+					TimeKey: "time",
+				})
+				cmd()
+
+				require.Equal(t, []string{"msg"}, m.keys)
+				require.Equal(t, [][]string{
+					{"msg", "time"}, {"msg"}, {"msg"},
+				}, asked)
+			},
+		)
 
 		t.Run("drops a result queried with old keys", func(t *testing.T) {
 			ctrl := gomock.NewController(t)
