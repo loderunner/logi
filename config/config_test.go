@@ -131,6 +131,28 @@ func TestLoadArgs(t *testing.T) {
 	}
 }
 
+func TestLoadExtraArguments(t *testing.T) {
+	t.Run("a flag after the file says to move it", func(t *testing.T) {
+		isolate(t)
+
+		_, err := config.Load([]string{"app.log", "-f"})
+
+		require.EqualError(
+			t,
+			err,
+			"-f comes after the file app.log; put flags before the file",
+		)
+	})
+
+	t.Run("a second file is named", func(t *testing.T) {
+		isolate(t)
+
+		_, err := config.Load([]string{"a.log", "b.log"})
+
+		require.EqualError(t, err, "expected one file, got 2: a.log b.log")
+	})
+}
+
 func TestLoadConfigFile(t *testing.T) {
 	t.Run("--config names the file", func(t *testing.T) {
 		isolate(t)

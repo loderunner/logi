@@ -43,8 +43,7 @@ func newFlattener() *flattener {
 // value wins in fields, and vals keeps them all.
 //
 // In vals, a string is only its words, so "a\tb  c" is "a b c". Punctuation
-// stays. A number or boolean is its literal text, and an array is its compact
-// JSON text.
+// stays. Any other value is the same as in fields.
 //
 // A line that isn't valid JSON, isn't an object, or has anything after the
 // object has a single field, "_raw", holding the whole line, and that line

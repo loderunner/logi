@@ -37,14 +37,15 @@ type Rows interface {
 
 // Options describes the input, for the status bar.
 type Options struct {
-	// Stdin is true when the input is a stream of unknown length. Otherwise
-	// the input is a file of FileSize bytes at startup.
-	Stdin    bool
+	// Stdin is true when the input is a stream of unknown length.
+	Stdin bool
+	// FileSize is the size in bytes of the input file at startup. It is
+	// unused when Stdin is true.
 	FileSize int64
 }
 
 // ErrMsg reports a failure that ends the program. Send it to the program
-// when ingest fails.
+// when reading the input or ingesting it fails.
 type ErrMsg struct {
 	Err error
 }
@@ -55,6 +56,7 @@ type pageMsg struct {
 	page logstore.Page
 }
 
+// tickMsg fires every rateTick, to recompute the rows/s figure.
 type tickMsg time.Time
 
 // sample is the row count at a point in time.
@@ -63,7 +65,8 @@ type sample struct {
 	rows int64
 }
 
-// Model is the root model.
+// Model is the root bubbletea model: the table, the status bar and the page
+// queries that fill the table.
 type Model struct {
 	source Rows
 	opts   Options
@@ -73,7 +76,7 @@ type Model struct {
 
 	// known lists every key seen so far, in order of appearance. timeKey is
 	// the one the timestamp came from, or "" until ingest has found it. keys
-	// is the subset the table shows.
+	// are the table's columns after the timestamp, as defaultKeys picks them.
 	known   []string
 	timeKey string
 	keys    []string
@@ -92,16 +95,19 @@ type Model struct {
 	gen    int
 	cancel context.CancelFunc
 
+	// rows, bytes and eof are the progress that ingest last reported.
+	// samples and rate are the rows/s figure and the history it comes from.
 	rows    int64
 	bytes   int64
 	eof     bool
 	samples []sample
 	rate    float64
 
+	// err is the failure that ended the program, if any.
 	err error
 }
 
-// New returns the root model.
+// New returns a Model that shows the rows of source.
 func New(source Rows, opts Options) Model {
 	return Model{
 		source:  source,
@@ -117,7 +123,7 @@ func (m Model) Err() error {
 	return m.err
 }
 
-// Init implements tea.Model.
+// Init implements tea.Model. It starts the ticker for the rows/s figure.
 func (m Model) Init() tea.Cmd {
 	return tea.Tick(rateTick, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
@@ -198,8 +204,9 @@ func (m Model) scroll(n int) (tea.Model, tea.Cmd) {
 	return m.refresh()
 }
 
-// refresh cancels the in-flight page query and starts a new one from the
-// confirmed top row, with the scrolling not yet confirmed.
+// refresh cancels the in-flight page query and starts a new one. The query
+// starts from the top row of the last page that arrived, and asks for all the
+// scrolling since then.
 func (m Model) refresh() (tea.Model, tea.Cmd) {
 	if m.cancel != nil {
 		m.cancel()
@@ -274,7 +281,7 @@ func queryPage(
 
 // updateRate sets the rows per second ingested over the last rateWindow
 // ending at now, and prunes the samples it no longer needs. It keeps the
-// newest sample older than the window as the baseline.
+// newest sample at or before the start of the window as the baseline.
 func (m Model) updateRate(now time.Time) Model {
 	cutoff := now.Add(-rateWindow)
 
@@ -297,7 +304,8 @@ func (m Model) updateRate(now time.Time) Model {
 	return m
 }
 
-// View implements tea.Model.
+// View implements tea.Model. It draws nothing until a WindowSizeMsg gives the
+// model a size.
 func (m Model) View() tea.View {
 	var v tea.View
 
@@ -333,10 +341,11 @@ func (m Model) status() string {
 	return strings.Join(parts, " · ")
 }
 
+// printer groups digits as English does, whatever the locale of the terminal.
 var printer = message.NewPrinter(language.English)
 
-// follow tells whether the view follows the newest row or stays where it was
-// scrolled.
+// follow returns the status bar's word for whether the view follows the newest
+// row or stays where it was scrolled.
 func (m Model) follow() string {
 	if m.from == nil {
 		return "following"
@@ -353,6 +362,7 @@ func (m Model) progress() string {
 	case m.opts.Stdin:
 		return "reading"
 	case m.opts.FileSize <= 0:
+		// An empty file has nothing left to load.
 		return printer.Sprint(number.Percent(1.0))
 	default:
 		// The file may have grown past its starting size.

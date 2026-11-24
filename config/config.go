@@ -2,9 +2,10 @@
 // LOGI_ environment variables and a JSON config file.
 //
 // A setting comes from the first of these that has it: the flag, the
-// environment variable, the config file, then the default. The file and -f are
-// not configurable from the environment or the config file: LOGI_FOLLOW=1
-// would break "kubectl logs | logi".
+// environment variable, the config file, then the default. Two things come only
+// from the command line: the log file, and -f, because LOGI_FOLLOW=1 would
+// break "kubectl logs | logi". The config file can be named by --config or
+// LOGI_CONFIG, but not by itself.
 package config
 
 import (
@@ -41,7 +42,7 @@ const (
 var ErrHelp = pflag.ErrHelp
 
 // UsageError reports a command line that logi can't run, so that the caller
-// can print the usage next to it. Other errors, such as an unreadable config
+// can point to the usage. Other errors, such as an unreadable config
 // file, are not about the command line.
 type UsageError struct {
 	Err error
@@ -83,36 +84,43 @@ func newFlags(cfg *Config) *pflag.FlagSet {
 		&cfg.Follow, "follow", "f", false, "keep reading as the file grows",
 	)
 	flags.StringVar(
-		&cfg.Config, configKey, "",
-		"read this JSON config file\n"+
-			"(default "+implicitConfigFile()+")",
+		&cfg.Config, configKey, "", configUsage(),
 	)
 	flags.StringVar(
 		&cfg.TimeField, timeFieldKey, "",
-		"use this key as the time of each line, instead of\n"+
-			"detecting it (case-sensitive; a nested key is dotted,\n"+
-			"as in log.time)",
+		"read the time from `key`, such as log.time (default: detect)",
 	)
 	flags.StringVar(
 		&cfg.MemoryLimit, memoryLimitKey, defaultMemoryLimit,
-		"limit DuckDB's memory, such as 512MB or 2GB\n"+
-			"(data over it spills to a temporary directory)",
+		"limit memory for logs to `size`, such as 512MB or 2GB",
 	)
 
 	return flags
 }
 
+// configUsage describes --config. The default is left out when there is no
+// home directory, so there is none to show.
+func configUsage() string {
+	usage := "read JSON config from `path`"
+
+	implicit := implicitConfigFile()
+	if implicit != "" {
+		usage += " (default " + implicit + ")"
+	}
+
+	return usage
+}
+
 // Usage describes the command line: the synopsis, the flags listed by pflag,
-// then notes that apply to all of them.
+// then notes.
 func Usage() string {
 	return "usage: logi [flags] [file]\n\n" +
 		"flags:\n" +
 		newFlags(&Config{}).FlagUsages() +
 		"\n" +
 		"  With no file, logi reads standard input.\n" +
-		"  Each flag has an environment variable named " + envPrefix + "_*,\n" +
-		"  where * is the flag's name in upper case, with hyphens as\n" +
-		"  underscores.\n"
+		"  Flags other than -f also read " + envPrefix + "_* variables, " +
+		"such as " + envPrefix + "_TIME_FIELD.\n"
 }
 
 // Load reads the command line, the environment and the config file. It
@@ -139,14 +147,14 @@ func Load(args []string) (Config, error) {
 	switch flags.NArg() {
 	case 0:
 		if cfg.Follow {
-			return Config{}, &UsageError{errors.New("--follow needs a file")}
+			return Config{}, &UsageError{errors.New(
+				"--follow needs a file: standard input is read until it closes",
+			)}
 		}
 	case 1:
 		cfg.LogFile = flags.Arg(0)
 	default:
-		return Config{}, &UsageError{fmt.Errorf(
-			"expected at most one file, got %d", flags.NArg(),
-		)}
+		return Config{}, &UsageError{tooManyArgs(flags.Args())}
 	}
 
 	// Each Load gets its own viper, so that nothing leaks between calls.
@@ -178,6 +186,24 @@ func Load(args []string) (Config, error) {
 	cfg.MemoryLimit = v.GetString(memoryLimitKey)
 
 	return cfg, nil
+}
+
+// tooManyArgs returns the error for args, which holds more than one argument.
+// A flag after the file is the likely cause, because flags stop at the first
+// argument that isn't a flag.
+func tooManyArgs(args []string) error {
+	for _, arg := range args[1:] {
+		if strings.HasPrefix(arg, "-") {
+			return fmt.Errorf(
+				"%s comes after the file %s; put flags before the file",
+				arg, args[0],
+			)
+		}
+	}
+
+	return fmt.Errorf(
+		"expected one file, got %d: %s", len(args), strings.Join(args, " "),
+	)
 }
 
 // bind makes the flag with this name, and the environment variable named after
@@ -223,6 +249,12 @@ func readConfigFile(v *viper.Viper, explicit string) (string, error) {
 	}
 
 	if err != nil {
+		// The path error repeats the path that the message names.
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) {
+			err = pathErr.Err
+		}
+
 		return "", fmt.Errorf("read config file %s: %w", path, err)
 	}
 

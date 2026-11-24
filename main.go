@@ -25,10 +25,15 @@ import (
 // lineBuffer is the capacity of the channel from the reader to ingest.
 const lineBuffer = 4096
 
+// usageHint ends the errors that a command line can fix.
+const usageHint = "Run 'logi -h' for usage.\n"
+
 func main() {
 	os.Exit(run())
 }
 
+// run returns the exit status: 0 for success or help, 1 for a failure, and 2
+// for a command line that logi can't run.
 func run() int {
 	cfg, err := config.Load(os.Args[1:])
 	if errors.Is(err, config.ErrHelp) {
@@ -38,7 +43,7 @@ func run() int {
 
 	var usageErr *config.UsageError
 	if errors.As(err, &usageErr) {
-		fmt.Fprintf(os.Stderr, "logi: %v\n\n%s", err, config.Usage())
+		fmt.Fprintf(os.Stderr, "logi: %v\n%s", err, usageHint)
 		return 2
 	}
 
@@ -52,8 +57,9 @@ func run() int {
 	if cfg.LogFile == "" && term.IsTerminal(os.Stdin.Fd()) {
 		fmt.Fprintf(
 			os.Stderr,
-			"logi: no file, and stdin is a terminal\n\n%s",
-			config.Usage(),
+			"logi: no file given, and standard input is a terminal: "+
+				"pass a file, or pipe logs into logi\n%s",
+			usageHint,
 		)
 
 		return 2
@@ -102,7 +108,7 @@ func start(cfg config.Config) (err error) {
 		}
 
 		if info.IsDir() {
-			return fmt.Errorf("%s is a directory", path)
+			return fmt.Errorf("%s is a directory, not a file", path)
 		}
 
 		opts.FileSize = info.Size()
@@ -152,7 +158,7 @@ func start(cfg config.Config) (err error) {
 	final, runErr := p.Run()
 
 	// Stop the goroutines and wait for ingest, which closes the Writer.
-	// Don't wait for ReadAll: a blocked read on stdin can't be interrupted,
+	// Don't wait for the reader: a blocked read on stdin can't be interrupted,
 	// and the process is about to exit.
 	cancel()
 

@@ -13,16 +13,15 @@ const (
 	flushInterval = 100 * time.Millisecond
 )
 
-// Appender stores rows. *logstore.Writer satisfies it. Rows must be visible
-// to queries after Flush.
-//
-// A ts must be representable as Unix nanoseconds, which limits it to the
-// years 1678 to 2262.
+// Appender stores rows. *logstore.Writer satisfies it.
 //
 // The Appender owns the schema: it adds a column the first time it sees a key
-// in fields. Flush returns the keys it has added since the last Flush, in the
-// order it added them.
+// in fields.
 type Appender interface {
+	// Append stores a row: its id, its time, the line's text as raw, the
+	// words to search as vals and the flattened fields. A ts must be
+	// representable as Unix nanoseconds, which limits it to the years 1678
+	// to 2262.
 	Append(
 		id int64,
 		ts time.Time,
@@ -32,6 +31,9 @@ type Appender interface {
 	// Restamp sets ts on every row with an id below beforeID, including rows
 	// appended but not yet flushed.
 	Restamp(beforeID int64, ts time.Time) error
+	// Flush makes the appended rows visible to queries. It returns the keys
+	// that Append has added as columns since the last Flush, in the order it
+	// added them.
 	Flush() ([]string, error)
 }
 
@@ -64,16 +66,17 @@ type Ingested struct {
 //
 // The timestamp comes from the time field, which the first line with a
 // parseable one fixes for the rest of the run (see stamper). With
-// opts.TimeField, that key is the only candidate. Before that, a
-// row has its arrival time. After it, a row without a usable time takes the
+// opts.TimeField, that key is the only candidate. Until the field is fixed, a
+// row has its arrival time. After that, a row without a usable time takes the
 // previous row's, so it sorts next to its neighbours. When the field is fixed
 // on a row after the first, Run restamps the rows before it with that row's
 // time, once.
 //
-// Run flushes after 10,000 unflushed rows or every 100ms, whichever comes
-// first, then calls notify with the keys the flush added. It skips a flush
-// when there are no new rows. When lines closes, it flushes and calls notify
-// with EOF set. When ctx ends, it flushes and returns nil.
+// Run flushes after flushRows unflushed rows or every flushInterval (10,000
+// rows or 100ms), whichever comes first, then calls notify with the keys the
+// flush added. It skips a flush when there are no new rows. When lines
+// closes, it flushes and calls notify with EOF set. When ctx ends, it flushes
+// and returns without setting EOF.
 func Run(
 	ctx context.Context,
 	lines <-chan Line,

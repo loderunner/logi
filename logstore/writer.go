@@ -59,6 +59,7 @@ func (s *Store) NewWriter(ctx context.Context) (*Writer, error) {
 	return w, nil
 }
 
+// openAppender opens an Appender with the logs table's current columns.
 func (w *Writer) openAppender() error {
 	err := w.conn.Raw(func(driverConn any) error {
 		var appErr error
@@ -82,6 +83,8 @@ func (w *Writer) openAppender() error {
 // has had before gets a new column, and earlier rows have no value for it.
 // The row isn't visible to queries until Flush.
 //
+// The id and ts place the row in the order that Page reads. The raw is the
+// line as read, and vals is the text of its values, for free-text search.
 // ts is stored as Unix nanoseconds, so it must be between the years 1678 and
 // 2262.
 func (w *Writer) Append(
@@ -173,8 +176,8 @@ func (w *Writer) addColumns(fields map[string]string) error {
 // appended but not yet flushed. The constraint on ts is the same as for
 // Append.
 func (w *Writer) Restamp(beforeID int64, ts time.Time) error {
-	// The UPDATE only sees flushed rows. It doesn't take Flush's job of
-	// reporting the added keys, so it leaves them for the next Flush.
+	// The UPDATE sees only flushed rows. Flushing the Appender, not the Writer,
+	// leaves the added keys for the next Flush to report.
 	err := w.app.Flush()
 	if err != nil {
 		return fmt.Errorf("flush appender: %w", err)
