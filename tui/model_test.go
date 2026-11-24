@@ -482,18 +482,44 @@ func TestModel(t *testing.T) {
 				},
 			)
 
-			t.Run("the arrow keys do nothing", func(t *testing.T) {
-				// The mock expects one Page call, for the first query.
-				m, _ := withRows(t, size, newest, older)
+			t.Run("the arrow and page keys scroll", func(t *testing.T) {
+				// The pane is 5 lines tall, and the mock expects one Page
+				// call, for the first query, so scrolling sends no query.
+				m, _ := withRows(t, size, logstore.Row{
+					ID:     1,
+					Raw:    `{"a":[1,2,3,4,5,6,7,8]}`,
+					Values: []string{""},
+				})
 				m, _ = update(t, m, enter)
 
-				for _, code := range []rune{
-					tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown,
+				firstLine := func(m Model) string {
+					first, _, _ := strings.Cut(
+						ansi.Strip(m.View().Content), "\n",
+					)
+
+					return first
+				}
+				require.Equal(t, "{", firstLine(m))
+
+				for _, step := range []struct {
+					key  rune
+					want string
+				}{
+					{tea.KeyDown, `  "a": [`},
+					{tea.KeyPgDown, "    5,"},
+					{tea.KeyUp, "    4,"},
+					{tea.KeyPgDown, "    6,"},
+					{tea.KeyPgDown, "    6,"},
+					{tea.KeyPgUp, "    1,"},
+					{tea.KeyPgUp, "{"},
 				} {
-					m, cmd := update(t, m, tea.KeyPressMsg{Code: code})
+					var cmd tea.Cmd
+
+					m, cmd = update(t, m, tea.KeyPressMsg{Code: step.key})
 					require.Nil(t, cmd)
 					require.True(t, m.showDetail)
 					require.Zero(t, m.move)
+					require.Equal(t, step.want, firstLine(m))
 				}
 			})
 

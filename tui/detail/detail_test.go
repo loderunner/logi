@@ -126,4 +126,63 @@ func TestModel(t *testing.T) {
 
 		require.Equal(t, "{\n  \"a\": 1", m.View())
 	})
+
+	t.Run("Scroll", func(t *testing.T) {
+		// Nine lines in a pane of three.
+		open := func() Model {
+			return New().SetSize(20, 3).Open(`{"a":[1,2,3,4,5]}`)
+		}
+
+		t.Run("moves the first line shown", func(t *testing.T) {
+			m := open().Scroll(2)
+
+			require.Equal(t, "    1,\n    2,\n    3,", m.View())
+
+			m = m.Scroll(-1)
+			require.Equal(t, "  \"a\": [\n    1,\n    2,", m.View())
+		})
+
+		t.Run("stops at the top", func(t *testing.T) {
+			m := open().Scroll(-5)
+
+			require.Equal(t, "{\n  \"a\": [\n    1,", m.View())
+		})
+
+		t.Run("stops at the last screenful", func(t *testing.T) {
+			m := open().Scroll(100)
+
+			require.Equal(t, "    5\n  ]\n}", m.View())
+
+			// Going back up starts from the last screenful, not from 100.
+			m = m.Scroll(-1)
+			require.Equal(t, "    4,\n    5\n  ]", m.View())
+		})
+
+		t.Run("does nothing when the lines fit", func(t *testing.T) {
+			m := New().SetSize(20, 5).Open(`{"a":1}`).Scroll(3)
+
+			require.Equal(t, "{\n  \"a\": 1\n}\n\n", m.View())
+		})
+	})
+
+	t.Run("SetSize clamps the offset", func(t *testing.T) {
+		m := New().SetSize(20, 3).Open(`{"a":[1,2,3,4,5]}`).Scroll(100)
+
+		m = m.SetSize(20, 5)
+		require.Equal(t, "    3,\n    4,\n    5\n  ]\n}", m.View())
+
+		m = m.SetSize(20, 20)
+		require.Equal(
+			t,
+			"{\n  \"a\": [\n    1,\n    2,\n    3,\n    4,\n    5\n  ]\n}",
+			strings.TrimRight(m.View(), "\n"),
+		)
+	})
+
+	t.Run("Open resets the offset", func(t *testing.T) {
+		m := New().SetSize(20, 3).Open(`{"a":[1,2,3,4,5]}`).Scroll(100)
+
+		m = m.Open(`{"b":[1,2,3,4,5]}`)
+		require.Equal(t, "{\n  \"b\": [\n    1,", m.View())
+	})
 }
