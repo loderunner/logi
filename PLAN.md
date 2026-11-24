@@ -103,10 +103,31 @@ the same ingest path for both:
   line.
 - Timestamps:
   - The time field is detected among `time`, `ts`, `timestamp` and
-    `@timestamp`, or set with `--time-field`.
-  - Formats are RFC3339 with any fractional precision, and numeric epochs in
-    s, ms or ns (guessed from the magnitude).
-  - A line with no timestamp gets its arrival time.
+    `@timestamp`, in that priority, or set with `--time-field`. A line's keys
+    match without regard to case. An exact-case match wins, and among keys
+    that differ only in case, the smallest one wins, so that the result
+    doesn't depend on map iteration. A dotted key such as `log.time`
+    doesn't match.
+  - Detection locks once. The first line with a candidate key whose value
+    parses fixes that exact key as the time field for the rest of the run.
+    After that only that key is read, and the other candidates are ignored. A
+    candidate whose value doesn't parse doesn't lock.
+  - Formats are RFC 3339 with any fractional precision, and numeric epochs,
+    as a JSON number or a numeric string, integer or fractional. The unit of
+    an epoch is guessed from its magnitude: under 1e11 is seconds, under 1e14
+    milliseconds, and anything else nanoseconds. Microseconds aren't
+    supported. Integers are parsed exactly, so nanoseconds survive.
+  - A time outside what Unix nanoseconds can hold, the years 1678 to 2262, is
+    unusable, so a strange value falls back instead of failing a write.
+  - A row without a usable time sorts by `id` among its neighbours, because
+    rows order by `(ts, id)`:
+    - After detection, a row whose time field is missing or doesn't parse
+      takes the previous row's `ts` exactly.
+    - Before detection, a row gets its arrival time, never earlier than the
+      previous row's `ts`.
+    - When the time field is first detected on row N, with N > 1, one
+      `UPDATE` sets `ts` on every row before N to row N's time, so they sort
+      just before it. There is no restamp when N is 1.
 - The catch-up speed (~60k rows/s) is accepted. Rows appear within ~70ms.
   For file input, the status bar shows the percentage loaded so far.
 
@@ -118,7 +139,9 @@ the same ingest path for both:
 - **Ingest goroutine.** The only writer. It parses lines, adds columns for
   new keys, and appends rows with the DuckDB Appender. It flushes every 10k
   rows or 100ms, whichever comes first. After each flush it sends
-  `Ingested{rows, newKeys}` to the bubbletea program.
+  `Ingested{rows, newKeys, timeKey}` to the bubbletea program.
+  - When the time field is detected after the first row, it flushes and runs
+    the one-time `UPDATE` that restamps the earlier rows.
   - The Appender's column set is fixed, so on new keys it flushes, closes
     the Appender, runs `ALTER TABLE`, and reopens it.
 - **bubbletea loop.** Never blocks on the database. Each query (table
@@ -159,10 +182,14 @@ the same ingest path for both:
   - While you're at the newest row, the table follows new rows. Scrolling
     away pauses following, and the view stays anchored on the top row's
     `(ts, id)`, so late lines don't shift what you're reading.
-- **Default columns.** Every known key except `_raw`. The timestamp comes
-  first, then a level-like key and a message-like key when detected, then
-  every other key in the order it first appeared. When `_raw` is the only
-  known key, it's the only column after the timestamp.
+- **Default columns.** Every known key except `_raw` and the time field. The
+  timestamp comes first, then a level-like key and a message-like key when
+  detected, then every other key in the order it first appeared. When `_raw`
+  is the only known key, or the time field is the only key, it's the only
+  column after the timestamp.
+  - The time field's text is still a stored key, with a column like any other
+    key. Only the default layout hides it, because it repeats the timestamp.
+    The picker can show it later.
   - Keys match without regard to case, in priority order. Level: `level`,
     `lvl`, `severity`, `loglevel`, `log_level`, `levelname`. Message: `msg`,
     `message`, `text`, `log`, `event`.

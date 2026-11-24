@@ -75,10 +75,12 @@ type Model struct {
 	table         table.Model
 	width, height int
 
-	// known lists every key seen so far, in order of appearance. keys is the
-	// subset the table shows.
-	known []string
-	keys  []string
+	// known lists every key seen so far, in order of appearance. timeKey is
+	// the one the timestamp came from, or "" until ingest has found it. keys
+	// is the subset the table shows.
+	known   []string
+	timeKey string
+	keys    []string
 
 	// gen numbers window queries. cancel stops the one in flight. A result
 	// with an older gen is dropped.
@@ -100,7 +102,7 @@ func New(source Rows, opts Options) Model {
 		source:  source,
 		opts:    opts,
 		table:   table.New(),
-		keys:    defaultKeys(nil),
+		keys:    defaultKeys(nil, ""),
 		samples: []sample{{at: time.Now()}},
 	}
 }
@@ -136,7 +138,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.bytes = msg.Bytes
 		m.eof = msg.EOF
 		m.samples = append(m.samples, sample{at: time.Now(), rows: msg.Rows})
-		m = m.addKeys(msg.NewKeys)
+		m = m.setColumns(msg.NewKeys, msg.TimeKey)
 
 		return m.refresh()
 
@@ -194,17 +196,15 @@ func (m Model) refresh() (tea.Model, tea.Cmd) {
 	return m, queryRows(ctx, m.source, m.height, keys, m.gen)
 }
 
-// addKeys records newly seen keys and, when they change the default columns,
-// switches the table to them. The refresh that follows loads rows for the
-// new keys, and its generation number drops results for the old ones.
-func (m Model) addKeys(newKeys []string) Model {
-	if len(newKeys) == 0 {
-		return m
-	}
-
+// setColumns records newly seen keys and the time key and, when they change
+// the default columns, switches the table to them. The refresh that follows
+// loads rows for the new keys, and its generation number drops results for
+// the old ones.
+func (m Model) setColumns(newKeys []string, timeKey string) Model {
 	m.known = append(m.known, newKeys...)
+	m.timeKey = timeKey
 
-	keys := defaultKeys(m.known)
+	keys := defaultKeys(m.known, m.timeKey)
 	if slices.Equal(keys, m.keys) {
 		return m
 	}
@@ -215,10 +215,10 @@ func (m Model) addKeys(newKeys []string) Model {
 	return m
 }
 
-// queryRows loads the newest limit rows, with a value for each of keys. It reports a failure as an ErrMsg,
-// except when ctx was canceled, which means a newer query replaced it or the
-// program is quitting. The driver may not wrap context.Canceled, so the
-// check is on ctx, not on the error.
+// queryRows loads the newest limit rows, with a value for each of keys. It
+// reports a failure as an ErrMsg, except when ctx was canceled, which means a
+// newer query replaced it or the program is quitting. The driver may not wrap
+// context.Canceled, so the check is on ctx, not on the error.
 func queryRows(
 	ctx context.Context,
 	source Rows,

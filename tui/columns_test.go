@@ -70,9 +70,60 @@ func TestDefaultKeys(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, defaultKeys(tt.known))
+			require.Equal(t, tt.want, defaultKeys(tt.known, ""))
 		})
 	}
+}
+
+func TestDefaultKeysTimeKey(t *testing.T) {
+	t.Run("leaves out the time key", func(t *testing.T) {
+		require.Equal(
+			t,
+			[]string{"level", "msg", "a"},
+			defaultKeys([]string{"time", "level", "a", "msg"}, "time"),
+		)
+	})
+
+	t.Run("leaves out only the key that is the time key", func(t *testing.T) {
+		require.Equal(
+			t,
+			[]string{"ts", "Time"},
+			defaultKeys([]string{"ts", "time", "Time"}, "time"),
+		)
+	})
+
+	t.Run("keeps every key until the time key is known", func(t *testing.T) {
+		require.Equal(
+			t,
+			[]string{"time", "a"},
+			defaultKeys([]string{"time", "a"}, ""),
+		)
+	})
+
+	t.Run("does not mistake an empty key for the absent time key",
+		func(t *testing.T) {
+			require.Equal(
+				t,
+				[]string{"", "a"},
+				defaultKeys([]string{"", "a"}, ""),
+			)
+		},
+	)
+
+	t.Run("shows the raw line when only the time key is known",
+		func(t *testing.T) {
+			require.Equal(
+				t,
+				[]string{"_raw"},
+				defaultKeys([]string{"time"}, "time"),
+			)
+			require.Equal(
+				t,
+				[]string{"_raw"},
+				defaultKeys([]string{"_raw", "time"}, "time"),
+			)
+		},
+	)
 }
 
 func TestMessageIndex(t *testing.T) {

@@ -11,8 +11,8 @@ import (
 	"github.com/loderunner/logi/logstore"
 )
 
-// stamp is the timestamp column of a row with TS 0.
-const stamp = "1970-01-01 00:00:00.000 "
+// stamp is the timestamp column of a row with the zero TS.
+const stamp = "0001-01-01 00:00:00.000 "
 
 // rawRows returns rows with no cell, so that each shows its raw line.
 func rawRows(raws ...string) []logstore.Row {
@@ -52,16 +52,34 @@ func TestModel(t *testing.T) {
 		t.Run(
 			"formats the timestamp in UTC with milliseconds",
 			func(t *testing.T) {
-				ts := time.Date(2026, 3, 4, 5, 6, 7, 89_000_000, time.UTC).
-					UnixNano()
 				rows := rawRows("x")
-				rows[0].TS = ts
+				rows[0].TS = time.Date(
+					2026,
+					3,
+					4,
+					5,
+					6,
+					7,
+					89_000_000,
+					time.UTC,
+				)
 
 				m := New().SetSize(60, 1).SetRows(rows)
 
 				require.Equal(t, "2026-03-04 05:06:07.089 x", m.View())
 			},
 		)
+
+		t.Run("converts a time in another zone to UTC", func(t *testing.T) {
+			rows := rawRows("x")
+			rows[0].TS = time.Date(
+				2026, 3, 4, 7, 6, 7, 0, time.FixedZone("UTC+2", 2*60*60),
+			)
+
+			m := New().SetSize(60, 1).SetRows(rows)
+
+			require.Equal(t, "2026-03-04 05:06:07.000 x", m.View())
+		})
 
 		t.Run("shows the cells in columns", func(t *testing.T) {
 			m := New().SetSize(80, 3).SetRows(cellRows(
@@ -238,7 +256,7 @@ func TestModel(t *testing.T) {
 		t.Run("cuts a narrow pane inside the timestamp", func(t *testing.T) {
 			m := New().SetSize(10, 1).SetRows(rawRows("x"))
 
-			require.Equal(t, "1970-01-0…", m.View())
+			require.Equal(t, "0001-01-0…", m.View())
 		})
 
 		t.Run("cuts wide characters by cells", func(t *testing.T) {
