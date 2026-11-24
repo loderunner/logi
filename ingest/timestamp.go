@@ -108,7 +108,14 @@ func parseEpoch(s string) (time.Time, bool) {
 // with a value that parses, and then fixed for the run. Re-detecting per line
 // would let one line with a stray "ts" field change the meaning of the column
 // halfway through a file.
+//
+// When the user names the time field, it is the only candidate. The rest is
+// the same: the key is fixed by the first line where its value parses, so that
+// the rows before it are restamped once.
 type stamper struct {
+	// field is the time field the user named, or "" to detect it among
+	// timeKeys.
+	field string
 	// key is the time field, or "" until it is detected.
 	key string
 	// last is the ts of the previous row.
@@ -122,7 +129,7 @@ func (s *stamper) stamp(
 	fields map[string]string,
 ) (ts time.Time, detected bool) {
 	if s.key == "" {
-		key, t, ok := detectTime(fields)
+		key, t, ok := detectTime(fields, s.field)
 		if ok {
 			s.key = key
 			s.last = t
@@ -153,12 +160,31 @@ func (s *stamper) stamp(
 	return s.last, false
 }
 
-// detectTime finds the time field among the fields of a line: the first
-// candidate, by priority, with a value that parses. A key that equals the
-// candidate wins over one that matches only without regard to case, and
-// among those the smallest key wins, so that the result doesn't depend on
-// map iteration.
-func detectTime(fields map[string]string) (string, time.Time, bool) {
+// detectTime finds the time field among the fields of a line.
+//
+// With a named field, only the key that equals it counts, exactly: the match
+// is case-sensitive, and the key may be a dotted, flattened one such as
+// "log.time". The value must parse.
+//
+// Without one, it is the first candidate, by priority, with a value that
+// parses. A key that equals the candidate wins over one that matches only
+// without regard to case, and among those the smallest key wins, so that the
+// result doesn't depend on map iteration.
+func detectTime(
+	fields map[string]string,
+	field string,
+) (string, time.Time, bool) {
+	if field != "" {
+		value, ok := fields[field]
+		if !ok {
+			return "", time.Time{}, false
+		}
+
+		t, ok := parseTime(value)
+
+		return field, t, ok
+	}
+
 	best := make([]string, len(timeKeys))
 
 	for key := range fields {

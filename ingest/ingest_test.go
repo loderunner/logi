@@ -35,7 +35,7 @@ func TestRun(t *testing.T) {
 		notified *[]Ingested
 	}
 
-	start := func(t *testing.T, w Appender) harness {
+	startWith := func(t *testing.T, w Appender, opts Options) harness {
 		t.Helper()
 
 		ctx, cancel := context.WithCancel(t.Context())
@@ -45,7 +45,7 @@ func TestRun(t *testing.T) {
 		var notified []Ingested
 
 		go func() {
-			done <- Run(ctx, lines, w, func(i Ingested) {
+			done <- Run(ctx, lines, w, opts, func(i Ingested) {
 				notified = append(notified, i)
 			})
 		}()
@@ -58,6 +58,12 @@ func TestRun(t *testing.T) {
 			done:     done,
 			notified: &notified,
 		}
+	}
+
+	start := func(t *testing.T, w Appender) harness {
+		t.Helper()
+
+		return startWith(t, w, Options{})
 	}
 
 	t.Run("flushes at 10,000 rows", func(t *testing.T) {
@@ -376,6 +382,47 @@ func TestRun(t *testing.T) {
 
 			err := <-h.done
 			require.NoError(t, err)
+		})
+	})
+
+	t.Run("uses the time field from the options", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			named := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
+
+			ctrl := gomock.NewController(t)
+			mockAppender := ingest_mock.NewMockAppender(ctrl)
+			gomock.InOrder(
+				// Without the option, "time" would fix the field here and
+				// nothing would be restamped.
+				mockAppender.EXPECT().
+					Append(int64(1), timeIs(time.Now().UTC()), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(nil),
+				mockAppender.EXPECT().
+					Restamp(int64(2), timeIs(named)).
+					Return(nil),
+				mockAppender.EXPECT().
+					Append(int64(2), timeIs(named), gomock.Any(), gomock.Any(), gomock.Any()).
+					Return(nil),
+				mockAppender.EXPECT().Flush().Return(nil, nil),
+			)
+
+			h := startWith(t, mockAppender, Options{TimeField: "log.time"})
+			h.lines <- Line{Text: []byte(`{"time":"2023-05-06T07:08:09Z"}`), End: 1}
+			h.lines <- Line{
+				Text: []byte(
+					`{"time":"2023-05-06T07:08:10Z","log":{"time":"2024-01-02T03:04:05Z"}}`,
+				),
+				End: 2,
+			}
+			close(h.lines)
+
+			err := <-h.done
+			require.NoError(t, err)
+			require.Equal(
+				t,
+				"log.time",
+				(*h.notified)[len(*h.notified)-1].TimeKey,
+			)
 		})
 	})
 

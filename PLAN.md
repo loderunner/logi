@@ -106,15 +106,20 @@ the same ingest path for both:
   line.
 - Timestamps:
   - The time field is detected among `time`, `ts`, `timestamp` and
-    `@timestamp`, in that priority, or set with `--time-field`. A line's keys
-    match without regard to case. An exact-case match wins, and among keys
-    that differ only in case, the smallest one wins, so that the result
-    doesn't depend on map iteration. A dotted key such as `log.time`
-    doesn't match.
+    `@timestamp`, in that priority. A line's keys match without regard to
+    case. An exact-case match wins, and among keys that differ only in case,
+    the smallest one wins, so that the result doesn't depend on map
+    iteration. A dotted key such as `log.time` doesn't match.
+  - `--time-field` (`LOGI_TIME_FIELD`, or `time-field` in the config file)
+    names the key instead. It is the exact key as flattened, so it is
+    case-sensitive and may be dotted, such as `log.time`. The candidates
+    above aren't tried: a line without that key, or with a value that doesn't
+    parse, has no time field, whatever else it has.
   - Detection locks once. The first line with a candidate key whose value
     parses fixes that exact key as the time field for the rest of the run.
     After that only that key is read, and the other candidates are ignored. A
-    candidate whose value doesn't parse doesn't lock.
+    candidate whose value doesn't parse doesn't lock. The same holds for the
+    key that `--time-field` names.
   - Formats are RFC 3339 with any fractional precision, and numeric epochs,
     as a JSON number or a numeric string, integer or fractional. The unit of
     an epoch is guessed from its magnitude: under 1e11 is seconds, under 1e14

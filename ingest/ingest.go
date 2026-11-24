@@ -35,6 +35,13 @@ type Appender interface {
 	Flush() ([]string, error)
 }
 
+// Options configures Run.
+type Options struct {
+	// TimeField is the key of the time field, exactly as the line flattens
+	// it, such as "log.time". "" detects the field among the usual names.
+	TimeField string
+}
+
 // Ingested reports progress after each flush.
 type Ingested struct {
 	// Rows is the number of rows stored so far.
@@ -56,7 +63,8 @@ type Ingested struct {
 // a timestamp, so that rows order by (ts, id).
 //
 // The timestamp comes from the time field, which the first line with a
-// parseable one fixes for the rest of the run (see stamper). Before that, a
+// parseable one fixes for the rest of the run (see stamper). With
+// opts.TimeField, that key is the only candidate. Before that, a
 // row has its arrival time. After it, a row without a usable time takes the
 // previous row's, so it sorts next to its neighbours. When the field is fixed
 // on a row after the first, Run restamps the rows before it with that row's
@@ -70,6 +78,7 @@ func Run(
 	ctx context.Context,
 	lines <-chan Line,
 	w Appender,
+	opts Options,
 	notify func(Ingested),
 ) error {
 	ticker := time.NewTicker(flushInterval)
@@ -78,7 +87,7 @@ func Run(
 	parser := newFlattener()
 
 	var (
-		stamps  stamper
+		stamps  = stamper{field: opts.TimeField}
 		total   int64
 		lastEnd int64
 		pending int

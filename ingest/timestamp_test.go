@@ -331,6 +331,91 @@ func TestStamper(t *testing.T) {
 		require.True(t, day(3).Equal(ts))
 	})
 
+	t.Run("a named field ignores the other candidates", func(t *testing.T) {
+		s := stamper{field: "ts"}
+
+		ts, detected := s.stamp(
+			map[string]string{"time": rfc(1), "ts": rfc(2)},
+		)
+		require.True(t, detected)
+		require.Equal(t, "ts", s.key)
+		require.True(t, day(2).Equal(ts))
+
+		// "time" doesn't take over, even when "ts" is gone.
+		ts, detected = s.stamp(map[string]string{"time": rfc(5)})
+		require.False(t, detected)
+		require.True(t, day(2).Equal(ts))
+	})
+
+	t.Run(
+		"a named field has no fallback to the candidates",
+		func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := stamper{field: "created"}
+
+				ts, detected := s.stamp(map[string]string{"time": rfc(1)})
+				require.False(t, detected)
+				require.Empty(t, s.key)
+				require.True(t, time.Now().UTC().Equal(ts), "arrival time")
+			})
+		},
+	)
+
+	t.Run("a named field matches case-sensitively", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			s := stamper{field: "Time"}
+
+			for _, key := range []string{"time", "TIME"} {
+				ts, detected := s.stamp(map[string]string{key: rfc(1)})
+				require.False(t, detected, key)
+				require.Empty(t, s.key, key)
+				require.True(t, time.Now().UTC().Equal(ts), "arrival time")
+			}
+
+			ts, detected := s.stamp(map[string]string{"Time": rfc(2)})
+			require.True(t, detected)
+			require.Equal(t, "Time", s.key)
+			require.True(t, day(2).Equal(ts))
+		})
+	})
+
+	t.Run("a named field can be a dotted key", func(t *testing.T) {
+		s := stamper{field: "log.time"}
+
+		ts, detected := s.stamp(map[string]string{
+			"time":     rfc(1),
+			"log.time": rfc(2),
+		})
+		require.True(t, detected)
+		require.Equal(t, "log.time", s.key)
+		require.True(t, day(2).Equal(ts))
+	})
+
+	t.Run(
+		"a named field locks on the first value that parses",
+		func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := stamper{field: "when"}
+
+				_, detected := s.stamp(map[string]string{"when": "soon"})
+				require.False(t, detected)
+				require.Empty(t, s.key)
+
+				// This is the row that tells the caller to restamp the rows
+				// before it.
+				ts, detected := s.stamp(map[string]string{"when": rfc(3)})
+				require.True(t, detected)
+				require.Equal(t, "when", s.key)
+				require.True(t, day(3).Equal(ts))
+
+				// Then a row without it takes the previous ts.
+				ts, detected = s.stamp(map[string]string{"msg": "x"})
+				require.False(t, detected)
+				require.True(t, day(3).Equal(ts))
+			})
+		},
+	)
+
 	t.Run("accepts epochs and numeric strings", func(t *testing.T) {
 		var s stamper
 
