@@ -11,10 +11,14 @@
 // The output has nested objects, an array field, keys that appear on only some
 // lines, about 2% out-of-order timestamps and about 0.1% lines that aren't
 // JSON.
+//
+// If the reader closes the pipe, genlogs exits with status 0, as it does on
+// SIGINT.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -24,7 +28,17 @@ import (
 )
 
 func main() {
+	// By default, the runtime kills a process whose write to stdout hits a
+	// closed pipe, with a "broken pipe" signal that shells and task runners
+	// report as a failure. Ignoring SIGPIPE makes the write return EPIPE
+	// instead, which is how a reader such as logi says it has quit.
+	signal.Ignore(syscall.SIGPIPE)
+
 	err := run()
+	if errors.Is(err, syscall.EPIPE) {
+		return
+	}
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "genlogs:", err)
 		os.Exit(1)
