@@ -11,6 +11,7 @@ deliverables (E1, E2…).
 
 ```
 main.go                 wiring: store, reader, ingest, TUI
+scripts/setup.sh        sets up a Linux dev machine (the cloud environment runs it)
 cmd/genlogs/            streams synthetic logs to stdout, or writes a sized batch
 logstore/               the only package that writes SQL (DuckDB)
 ingest/                 reads lines (file, stdin) and appends them to the store
@@ -27,7 +28,8 @@ that uses them (`ingest.Appender`, `tui.Rows`), and the concrete types in
 ## Tasks
 
 Tooling: `brew install go go-task golangci-lint`. Building needs a C
-toolchain, because DuckDB uses cgo. mockgen is a Go tool in `go.mod`, so
+toolchain, because DuckDB uses cgo. On a Linux remote machine with Nix, run
+`scripts/setup.sh` instead of brew; it is idempotent. mockgen is a Go tool in `go.mod`, so
 there is nothing else to install. Use `task`, not raw `go` or
 `golangci-lint`, except for single tests.
 
