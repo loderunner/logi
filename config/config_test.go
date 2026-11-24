@@ -295,10 +295,99 @@ func TestLoadConfigFile(t *testing.T) {
 	)
 }
 
+func TestLoadTimeField(t *testing.T) {
+	// setup makes every level name a different value, and returns the
+	// --config path. The implicit file is in XDG_CONFIG_HOME.
+	setup := func(t *testing.T) (explicit string) {
+		t.Helper()
+
+		xdg := isolate(t)
+
+		writeFile(t, xdg, "logi/config.json", `{"time-field": "implicit"}`)
+		t.Setenv("LOGI_TIME_FIELD", "env")
+
+		return writeFile(t, t.TempDir(), "c.json", `{"time-field": "explicit"}`)
+	}
+
+	t.Run("the default is empty", func(t *testing.T) {
+		isolate(t)
+
+		got, err := config.Load([]string{"app.log"})
+
+		require.NoError(t, err)
+		require.Empty(t, got.TimeField)
+	})
+
+	t.Run("the flag beats everything", func(t *testing.T) {
+		explicit := setup(t)
+
+		got, err := config.Load(
+			[]string{"--config", explicit, "--time-field", "flag", "app.log"},
+		)
+
+		require.NoError(t, err)
+		require.Equal(t, "flag", got.TimeField)
+	})
+
+	t.Run("the environment beats the files", func(t *testing.T) {
+		explicit := setup(t)
+
+		got, err := config.Load([]string{"--config", explicit, "app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "env", got.TimeField)
+	})
+
+	t.Run("an explicit file beats the implicit one", func(t *testing.T) {
+		explicit := setup(t)
+		t.Setenv("LOGI_TIME_FIELD", "")
+
+		got, err := config.Load([]string{"--config", explicit, "app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "explicit", got.TimeField)
+	})
+
+	t.Run("an explicit file hides the implicit one", func(t *testing.T) {
+		xdg := isolate(t)
+
+		writeFile(t, xdg, "logi/config.json", `{"time-field": "implicit"}`)
+
+		explicit := writeFile(t, t.TempDir(), "c.json", `{}`)
+
+		got, err := config.Load([]string{"--config", explicit, "app.log"})
+
+		require.NoError(t, err)
+		require.Empty(t, got.TimeField)
+	})
+
+	t.Run("the implicit file beats the default", func(t *testing.T) {
+		setup(t)
+		t.Setenv("LOGI_TIME_FIELD", "")
+
+		got, err := config.Load([]string{"app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "implicit", got.TimeField)
+	})
+
+	t.Run("a dotted key is kept as it is", func(t *testing.T) {
+		xdg := isolate(t)
+
+		writeFile(t, xdg, "logi/config.json", `{"time-field": "log.time"}`)
+
+		got, err := config.Load([]string{"app.log"})
+
+		require.NoError(t, err)
+		require.Equal(t, "log.time", got.TimeField)
+	})
+}
+
 func TestUsage(t *testing.T) {
 	got := config.Usage()
 
 	require.Contains(t, got, "usage: logi")
 	require.Contains(t, got, "-f, --follow")
 	require.Contains(t, got, "--config")
+	require.Contains(t, got, "--time-field")
 }

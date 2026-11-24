@@ -135,9 +135,13 @@ func start(cfg config.Config) (err error) {
 	ingestDone := make(chan error, 1)
 
 	go func() {
-		runErr := ingest.Run(ctx, lines, writer, func(i ingest.Ingested) {
-			p.Send(i)
-		})
+		runErr := ingest.Run(
+			ctx,
+			lines,
+			writer,
+			ingest.Options{TimeField: cfg.TimeField},
+			func(i ingest.Ingested) { p.Send(i) },
+		)
 		closeErr := writer.Close()
 
 		err := errors.Join(runErr, closeErr)

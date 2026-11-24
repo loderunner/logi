@@ -27,6 +27,9 @@ const (
 	// configKey is the flag, and the environment variable suffix, that name
 	// the config file.
 	configKey = "config"
+	// timeFieldKey is the flag, the environment variable suffix and the
+	// config file key that name the time field.
+	timeFieldKey = "time-field"
 )
 
 // ErrHelp is returned by Load when the command line asks for help.
@@ -53,6 +56,9 @@ type Config struct {
 	// Config is the config file in use, wherever it came from, or "" when
 	// there is none.
 	Config string
+	// TimeField is the key that holds each line's time, exactly as the
+	// line flattens it, such as "log.time". "" detects it.
+	TimeField string
 }
 
 // newFlags returns the flag set that writes into cfg. It is the one place that
@@ -72,6 +78,12 @@ func newFlags(cfg *Config) *pflag.FlagSet {
 		&cfg.Config, configKey, "",
 		"read this JSON config file\n"+
 			"(default "+implicitConfigFile()+")",
+	)
+	flags.StringVar(
+		&cfg.TimeField, timeFieldKey, "",
+		"use this key as the time of each line, instead of\n"+
+			"detecting it (case-sensitive; a nested key is dotted,\n"+
+			"as in log.time)",
 	)
 
 	return flags
@@ -134,10 +146,17 @@ func Load(args []string) (Config, error) {
 		return Config{}, err
 	}
 
+	err = bind(v, flags, timeFieldKey)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg.Config, err = readConfigFile(v, v.GetString(configKey))
 	if err != nil {
 		return Config{}, err
 	}
+
+	cfg.TimeField = v.GetString(timeFieldKey)
 
 	return cfg, nil
 }
