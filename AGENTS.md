@@ -11,7 +11,7 @@ deliverables (E1, E2…).
 
 ```
 main.go                 wiring: store, reader, ingest, TUI
-cmd/genlogs/            writes synthetic logs to stdout
+cmd/genlogs/            streams synthetic logs to stdout, or writes a sized batch
 logstore/               the only package that writes SQL (DuckDB)
 ingest/                 reads lines (file, stdin) and appends them to the store
   mock_/                generated mocks for ingest's interfaces
