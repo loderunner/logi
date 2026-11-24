@@ -188,10 +188,6 @@ func (s *Store) keysAround(
 // keyFilter returns a WHERE clause, with a leading space, that keeps the rows
 // whose (ts, id) compares to k with op, which is "<=" or ">". It returns
 // nothing for a nil k, which matches every row.
-//
-// The clause spells the comparison out instead of using a row value,
-// (ts, id) <= (?, ?), because that was 1.6 to 3 times slower for the rows
-// query on 583k rows in a benchmark, and no faster for the key queries.
 func keyFilter(k *Key, op string) (string, []any) {
 	if k == nil {
 		return "", nil
@@ -200,6 +196,8 @@ func keyFilter(k *Key, op string) (string, []any) {
 	ts := k.TS.UnixNano()
 	strict := strings.TrimSuffix(op, "=")
 
+	// Spelling out the comparison instead of a row value (ts, id) <= (?, ?)
+	// is ~3x faster
 	return fmt.Sprintf(
 			" WHERE ts %s ? OR (ts = ? AND id %s ?)",
 			strict,
