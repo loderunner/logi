@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
@@ -61,11 +62,11 @@ func TestModel(t *testing.T) {
 				m, _ = update(t, m, cmd())
 
 				require.Equal(t, "newer", m.table.Rows()[0].Raw)
-				require.Contains(
-					t,
-					m.View().Content,
-					"0001-01-01 00:00:00.000 newer\n0001-01-01 00:00:00.000 older",
-				)
+				view := ansi.Strip(m.View().Content)
+
+				// The top row is padded to the width, so it ends in spaces.
+				require.Contains(t, view, "0001-01-01 00:00:00.000 newer ")
+				require.Contains(t, view, "\n0001-01-01 00:00:00.000 older\n")
 			},
 		)
 
