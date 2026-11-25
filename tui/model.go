@@ -220,7 +220,7 @@ func (m Model) openDetail() Model {
 		return m
 	}
 
-	m.detail = m.detail.Open(row.Raw)
+	m.detail = m.detail.Open("Detail: "+table.FormatTime(row.TS), row.Raw)
 	m.showDetail = true
 
 	return m

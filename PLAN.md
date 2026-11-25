@@ -392,7 +392,7 @@ one feature.
 
 | # | You see | Built |
 |---|---|---|
-| F1 | Enter opens a row's pretty-printed JSON, Esc closes it. | `tui/detail`. |
+| F1 | Enter opens a row's pretty-printed JSON in a frame titled with its timestamp, Esc closes it. | `tui/detail`. |
 | F2 | `/` focuses a filter bar. `level:error` plus Enter filters the table. Typos show an inline error. | `tui/filterbar`, `kql` with a single `field:value` term, compiling to `WHERE`, cancelling superseded queries. |
 | F3 | `service:billing AND (level:warn OR level:error)`, `NOT level:debug`. | Boolean operators, parentheses, implicit AND. |
 | F4 | `http.status>=500`. | Numeric comparisons with `TRY_CAST`. |
