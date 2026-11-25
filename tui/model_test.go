@@ -393,6 +393,7 @@ func TestModel(t *testing.T) {
 
 			newest := logstore.Row{
 				ID:     2,
+				TS:     time.Date(2026, 11, 25, 9, 0, 58, 405e6, time.UTC),
 				Raw:    `{"msg":"hi","n":[1,2]}`,
 				Values: []string{"hi"},
 			}
@@ -420,7 +421,7 @@ func TestModel(t *testing.T) {
 
 				lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 				require.Equal(t, []string{
-					"╭─ Line 2 ─────────────────────────────╮",
+					"╭─ Detail: 2026-11-25 09:00:58.405 ────╮",
 					"│ {                                    │",
 					`│   "msg": "hi",                       │`,
 					`│   "n": [                             │`,
@@ -437,7 +438,7 @@ func TestModel(t *testing.T) {
 				require.False(t, m.showDetail)
 
 				view := ansi.Strip(m.View().Content)
-				require.Contains(t, view, "0001-01-01 00:00:00.000 hi")
+				require.Contains(t, view, "2026-11-25 09:00:58.405 hi")
 				require.NotContains(t, view, `"msg"`)
 			})
 

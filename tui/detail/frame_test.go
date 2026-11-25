@@ -10,9 +10,9 @@ import (
 
 func TestFrame(t *testing.T) {
 	t.Run("draws a rounded border with the title", func(t *testing.T) {
-		m := New().SetSize(16, 5).Open("Line 7", `{"a":1}`)
+		m := New().SetSize(16, 5).Open("Title", `{"a":1}`)
 
-		want := "╭─ Line 7 ─────╮\n" +
+		want := "╭─ Title ──────╮\n" +
 			"│ {            │\n" +
 			"│   \"a\": 1     │\n" +
 			"│ }            │\n" +
@@ -33,9 +33,9 @@ func TestFrame(t *testing.T) {
 	})
 
 	t.Run("cuts a title too long for the top edge", func(t *testing.T) {
-		m := New().SetSize(12, 4).Open("Line 123,456", "x")
+		m := New().SetSize(12, 4).Open("Detail: 2026-11-25", "x")
 
-		want := "╭─ Line … ─╮\n" +
+		want := "╭─ Detai… ─╮\n" +
 			"│ x        │\n" +
 			"│          │\n" +
 			"╰──────────╯"
@@ -52,7 +52,7 @@ func TestFrame(t *testing.T) {
 
 	t.Run("is dropped when the pane is too small", func(t *testing.T) {
 		for _, size := range [][2]int{{9, 10}, {40, 3}} {
-			m := New().SetSize(size[0], size[1]).Open("Line 1", "x")
+			m := New().SetSize(size[0], size[1]).Open("Title", "x")
 
 			require.NotContains(t, m.View(), "╭", size)
 			require.Equal(t, m.body(), m.View(), size)

@@ -4,6 +4,7 @@ package table
 
 import (
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -15,8 +16,6 @@ import (
 const (
 	// ellipsis ends a value that was cut short.
 	ellipsis = "…"
-	// timeLayout formats the timestamp column, in UTC.
-	timeLayout = "2006-01-02 15:04:05.000"
 	// separator goes between columns.
 	separator = " "
 	// maxColumnShare caps a column that isn't the last at 1/maxColumnShare of
@@ -183,12 +182,21 @@ func (m Model) View() string {
 	return strings.Join(lines, "\n")
 }
 
+// timeLayout is the layout of FormatTime.
+const timeLayout = "2006-01-02 15:04:05.000"
+
+// FormatTime formats t as the timestamp column shows it, in UTC to the
+// millisecond.
+func FormatTime(t time.Time) string {
+	return t.UTC().Format(timeLayout)
+}
+
 // line renders one row, cut to the width. A selected row is in reverse video
 // and padded to the width, so the highlight spans the pane.
 func (m Model) line(row logstore.Row, selected bool) string {
 	c := clip{left: m.width}
 
-	c.value(row.TS.UTC().Format(timeLayout))
+	c.value(FormatTime(row.TS))
 	c.gap(separator)
 
 	var level span
