@@ -1,5 +1,6 @@
 // Package tui is logi's terminal interface: a table of rows, newest first,
-// and a status bar.
+// a detail pane that shows one row's JSON in place of the table, and a status
+// bar.
 package tui
 
 import (
@@ -18,6 +19,7 @@ import (
 
 	"github.com/loderunner/logi/ingest"
 	"github.com/loderunner/logi/logstore"
+	"github.com/loderunner/logi/tui/detail"
 	"github.com/loderunner/logi/tui/table"
 )
 
@@ -65,14 +67,20 @@ type sample struct {
 	rows int64
 }
 
-// Model is the root bubbletea model: the table, the status bar and the page
-// queries that fill the table.
+// Model is the root bubbletea model: the table, the detail pane, the status bar
+// and the page queries that fill the table.
 type Model struct {
 	source Rows
 	opts   Options
 
 	table         table.Model
 	width, height int
+
+	// detail holds its own copy of the row it shows, so the table can keep
+	// loading pages while the pane is open. showDetail is true while the pane
+	// takes the table's place.
+	detail     detail.Model
+	showDetail bool
 
 	// known lists every key seen so far, in order of appearance. timeKey is
 	// the one the timestamp came from, or "" until ingest has found it. keys
@@ -113,6 +121,7 @@ func New(source Rows, opts Options) Model {
 		source:  source,
 		opts:    opts,
 		table:   table.New(),
+		detail:  detail.New(),
 		keys:    defaultKeys(nil, ""),
 		samples: []sample{{at: time.Now()}},
 	}
@@ -135,6 +144,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m.quit()
+		case "esc":
+			return m.closeDetail(), nil
+		}
+
+		// The table's keys don't reach it while the detail pane covers it.
+		if m.showDetail {
+			return m, nil
+		}
+
+		switch msg.String() {
+		case "enter":
+			return m.openDetail(), nil
 		case "up":
 			return m.scroll(-1)
 		case "down":
@@ -149,6 +170,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = max(msg.Height-1, 0) // the status bar takes a line
 		m.table = m.table.SetSize(m.width, m.height)
+		m.detail = m.detail.SetSize(m.width, m.height)
 
 		return m.refresh()
 
@@ -185,6 +207,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// openDetail opens the detail pane on the selected row. An empty table has
+// none, so nothing opens.
+func (m Model) openDetail() Model {
+	row, ok := m.table.Selected()
+	if !ok {
+		return m
+	}
+
+	m.detail = m.detail.Open(row.Raw)
+	m.showDetail = true
+
+	return m
+}
+
+// closeDetail closes the detail pane and brings back the table. It does
+// nothing when the pane is closed.
+func (m Model) closeDetail() Model {
+	m.showDetail = false
+
+	return m
 }
 
 // quit stops the in-flight query and ends the program.
@@ -324,7 +368,12 @@ func (m Model) View() tea.View {
 		Width(m.width).
 		Render(status)
 
-	v.SetContent(m.table.View() + "\n" + status)
+	pane := m.table.View()
+	if m.showDetail {
+		pane = m.detail.View()
+	}
+
+	v.SetContent(pane + "\n" + status)
 
 	return v
 }

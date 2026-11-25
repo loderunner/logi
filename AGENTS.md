@@ -19,6 +19,8 @@ ingest/                 reads lines (file, stdin) and appends them to the store
   mock_/                generated mocks for ingest's interfaces
 tui/                    the bubbletea root model
   table/                the table pane
+  detail/               the detail pane: one row's JSON
+  termtext/             makes log text safe to print
   mock_/                generated mocks for tui's interfaces
 ```
 

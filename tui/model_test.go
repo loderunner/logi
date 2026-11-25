@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -35,6 +36,27 @@ func keysAre(keys ...string) gomock.Matcher {
 	return gomock.Cond(func(q logstore.PageQuery) bool {
 		return slices.Equal(q.Keys, keys)
 	})
+}
+
+// withRows returns a model of the given size whose table shows rows, newest
+// first. The mock serves a page of rows to the first query.
+func withRows(
+	t *testing.T,
+	size tea.WindowSizeMsg,
+	rows ...logstore.Row,
+) (Model, *tui_mock.MockRows) {
+	t.Helper()
+
+	mockRows := tui_mock.NewMockRows(gomock.NewController(t))
+	mockRows.EXPECT().
+		Page(gomock.Any(), gomock.Any()).
+		Return(logstore.Page{Rows: rows}, nil)
+
+	m := New(mockRows, Options{FileSize: 100})
+	m, cmd := update(t, m, size)
+	m, _ = update(t, m, cmd())
+
+	return m, mockRows
 }
 
 func TestModel(t *testing.T) {
@@ -363,6 +385,178 @@ func TestModel(t *testing.T) {
 				_, ok := cmd().(tea.QuitMsg)
 				require.True(t, ok, key.String())
 			}
+		})
+
+		t.Run("detail pane", func(t *testing.T) {
+			enter := tea.KeyPressMsg{Code: tea.KeyEnter}
+			esc := tea.KeyPressMsg{Code: tea.KeyEscape}
+
+			newest := logstore.Row{
+				ID:     2,
+				Raw:    `{"msg":"hi","n":[1,2]}`,
+				Values: []string{"hi"},
+			}
+			older := logstore.Row{
+				ID:     1,
+				Raw:    `{"msg":"old"}`,
+				Values: []string{"old"},
+			}
+
+			t.Run("Enter opens the top row's JSON", func(t *testing.T) {
+				m, _ := withRows(t, size, newest, older)
+
+				m, cmd := update(t, m, enter)
+				require.Nil(t, cmd)
+				require.True(t, m.showDetail)
+
+				lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+				require.Equal(t, []string{
+					"{",
+					`  "msg": "hi",`,
+					`  "n": [`,
+					"    1,",
+					"    2",
+				}, lines[:5])
+				require.NotContains(t, lines[0], "0001-01-01")
+			})
+
+			t.Run("Esc brings back the table", func(t *testing.T) {
+				m, _ := withRows(t, size, newest, older)
+				m, _ = update(t, m, enter)
+
+				m, cmd := update(t, m, esc)
+				require.Nil(t, cmd)
+				require.False(t, m.showDetail)
+
+				view := ansi.Strip(m.View().Content)
+				require.Contains(t, view, "0001-01-01 00:00:00.000 hi")
+				require.NotContains(t, view, `"msg"`)
+			})
+
+			t.Run("shows a line that isn't JSON without control characters",
+				func(t *testing.T) {
+					m, _ := withRows(t, size, logstore.Row{
+						ID:     1,
+						Raw:    "not json\t\x1b[31mred",
+						Values: []string{""},
+					})
+
+					m, _ = update(t, m, enter)
+
+					first, _, _ := strings.Cut(
+						ansi.Strip(m.View().Content), "\n",
+					)
+					require.Equal(t, "not json    �[31mred", first)
+				},
+			)
+
+			t.Run("Enter on an empty table does nothing", func(t *testing.T) {
+				m, _ := withRows(t, size)
+
+				m, cmd := update(t, m, enter)
+				require.Nil(t, cmd)
+				require.False(t, m.showDetail)
+			})
+
+			t.Run("Enter before the window size is known does nothing",
+				func(t *testing.T) {
+					m := New(
+						tui_mock.NewMockRows(gomock.NewController(t)),
+						Options{},
+					)
+
+					m, cmd := update(t, m, enter)
+					require.Nil(t, cmd)
+					require.False(t, m.showDetail)
+				},
+			)
+
+			t.Run(
+				"Esc with the table showing does nothing",
+				func(t *testing.T) {
+					m, _ := withRows(t, size, newest)
+
+					m, cmd := update(t, m, esc)
+					require.Nil(t, cmd)
+					require.False(t, m.showDetail)
+				},
+			)
+
+			t.Run("the arrow keys do nothing", func(t *testing.T) {
+				// The mock expects one Page call, for the first query.
+				m, _ := withRows(t, size, newest, older)
+				m, _ = update(t, m, enter)
+
+				for _, code := range []rune{
+					tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown,
+				} {
+					m, cmd := update(t, m, tea.KeyPressMsg{Code: code})
+					require.Nil(t, cmd)
+					require.True(t, m.showDetail)
+					require.Zero(t, m.move)
+				}
+			})
+
+			t.Run("q and ctrl+c quit", func(t *testing.T) {
+				for _, key := range []tea.KeyPressMsg{
+					{Code: 'q', Text: "q"},
+					{Code: 'c', Mod: tea.ModCtrl},
+				} {
+					m, _ := withRows(t, size, newest)
+					m, _ = update(t, m, enter)
+
+					_, cmd := update(t, m, key)
+					require.NotNil(t, cmd, key.String())
+
+					_, ok := cmd().(tea.QuitMsg)
+					require.True(t, ok, key.String())
+				}
+			})
+
+			t.Run("Ingested still queries a page and updates the table",
+				func(t *testing.T) {
+					m, mockRows := withRows(t, size, newest, older)
+					m, _ = update(t, m, enter)
+
+					fresh := logstore.Row{
+						ID:     3,
+						Raw:    `{"msg":"fresh"}`,
+						Values: []string{"fresh"},
+					}
+					mockRows.EXPECT().
+						Page(gomock.Any(), gomock.Any()).
+						Return(logstore.Page{Rows: []logstore.Row{fresh, newest}}, nil)
+
+					m, cmd := update(t, m, ingest.Ingested{Rows: 3})
+					require.NotNil(t, cmd)
+
+					m, _ = update(t, m, cmd())
+					require.Equal(t, "fresh", m.table.Rows()[0].Values[0])
+
+					// The pane still shows the row it opened on.
+					require.Contains(t, ansi.Strip(m.View().Content), `"hi"`)
+
+					m, _ = update(t, m, esc)
+					require.Contains(
+						t,
+						ansi.Strip(m.View().Content),
+						"0001-01-01 00:00:00.000 fresh",
+					)
+				},
+			)
+
+			t.Run("a resize resizes the pane", func(t *testing.T) {
+				m, _ := withRows(t, size, newest)
+				m, _ = update(t, m, enter)
+
+				m, _ = update(t, m, tea.WindowSizeMsg{Width: 8, Height: 6})
+
+				require.Contains(
+					t,
+					ansi.Strip(m.View().Content),
+					"  \"msg\":\n",
+				)
+			})
 		})
 
 		t.Run("other keys do nothing", func(t *testing.T) {

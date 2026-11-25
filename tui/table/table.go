@@ -4,19 +4,17 @@ package table
 
 import (
 	"strings"
-	"unicode"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/loderunner/logi/logstore"
+	"github.com/loderunner/logi/tui/termtext"
 )
 
 const (
 	// ellipsis ends a value that was cut short.
 	ellipsis = "…"
-	// tabWidth is how many spaces replace a tab.
-	tabWidth = 4
 	// timeLayout formats the timestamp column, in UTC.
 	timeLayout = "2006-01-02 15:04:05.000"
 	// separator goes between columns.
@@ -134,7 +132,10 @@ func (m Model) grownWidths(rows []logstore.Row) []int {
 		}
 
 		for i, value := range row.Values {
-			widths[i] = max(widths[i], ansi.StringWidth(sanitize(value)))
+			widths[i] = max(
+				widths[i],
+				ansi.StringWidth(termtext.Sanitize(value)),
+			)
 		}
 	}
 
@@ -154,6 +155,16 @@ func showsRaw(row logstore.Row) bool {
 	}
 
 	return true
+}
+
+// Selected returns the selected row, which is the top one, and false when the
+// table is empty.
+func (m Model) Selected() (logstore.Row, bool) {
+	if len(m.rows) == 0 {
+		return logstore.Row{}, false
+	}
+
+	return m.rows[0], true
 }
 
 // View renders one line per row, cut to the width, then blank lines up to the
@@ -182,7 +193,7 @@ func (m Model) line(row logstore.Row, selected bool) string {
 
 	var level span
 	if showsRaw(row) {
-		c.value(sanitize(row.Raw))
+		c.value(termtext.Sanitize(row.Raw))
 	} else {
 		level = m.writeCells(&c, row.Values, selected)
 	}
@@ -204,7 +215,7 @@ func (m Model) writeCells(c *clip, values []string, selected bool) span {
 	var level span
 
 	for i, value := range values {
-		value = sanitize(value)
+		value = termtext.Sanitize(value)
 		cell, padding := value, ""
 
 		if i < len(values)-1 {
@@ -318,19 +329,4 @@ func (c *clip) write(s, tail string) {
 
 	c.b.WriteString(s)
 	c.left -= width
-}
-
-// sanitize makes s safe to print. Control characters, ESC included, become
-// U+FFFD so that a log line can't send escape sequences to the terminal, and
-// tabs become spaces. Invalid UTF-8 also becomes U+FFFD.
-func sanitize(s string) string {
-	s = strings.ReplaceAll(s, "\t", strings.Repeat(" ", tabWidth))
-
-	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return unicode.ReplacementChar
-		}
-
-		return r
-	}, s)
 }
