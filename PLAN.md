@@ -287,6 +287,25 @@ the same ingest path for both:
   them for their own cursors.
 - **Keys outside the filter.** `+`, `-`, `=`, `c` and `q` act only when
   the filter doesn't have focus. While it does, they're typed as text.
+- **Status bar**
+  - One line at the bottom: key hints on the left, status on the right. It's
+    always shown, and there's no `?` help screen.
+  - The hints are the focused pane's keys, then `│`, then a global tail:
+    `/ filter`, `^G^F^T panes`, `q quit`. In the filter, the tail is only
+    `^C quit`, because `/` and `q` are typed as text there.
+  - Pane keys:
+    - Row: `↑↓ scroll`, `⏎ detail`, `←→ columns`, `c picker`.
+    - Header: `⏎ flip order`, `←→ columns`.
+    - Histogram: `←→ cursor`, `+- zoom`, `= live`.
+    - Filter: `⏎ apply`.
+    - Picker: `space toggle`, `^X reset`, `esc close`.
+    - Detail: `↑↓ scroll`, `esc close`.
+  - The hints use the short view of bubbles `help`: faint text, with `•`
+    between hints. Each pane declares its keys once, as `key.Binding`s, and
+    those both handle the keys and render the hints.
+  - The status is always shown whole. When the line is too narrow, whole
+    hints drop from the end of the pane keys first, then from the end of the
+    global tail. A hint is never cut in half.
 
 ### Configuration
 
@@ -391,3 +410,4 @@ one feature.
 | F18 | Enter on the table header flips newest at the top or the bottom, with `▼`/`▲` on the timestamp header, and it's remembered. | Order toggle, follow at either end, persisted. |
 | F19 | Ctrl+G, Ctrl+F and Ctrl+T hide and show the panes, and it's remembered. `/` brings the filter back. | Pane visibility in the config file, layout reflow, Ctrl+F removed from the text input's key map. |
 | F20 | `logi --hide-histogram /tmp/app.log` and `LOGI_HIDE_LOG=1 logi …`. | `--hide-*` flags and environment variables, through config precedence. |
+| F21 | Key hints for the focused pane on the left of the status bar, then `/`, `^G^F^T` and `q`. They change as focus moves. A narrow terminal drops hints but keeps the status whole. | Per-pane `key.Binding`s that drive both key handling and bubbles `help`, the global tail, and dropping whole hints from the end. |
