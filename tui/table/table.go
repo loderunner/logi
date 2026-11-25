@@ -34,7 +34,7 @@ const (
 var selectedStyle = lipgloss.NewStyle().Reverse(true)
 
 // Model is the table pane. It holds the rows to show, newest first, and the
-// size of the pane. The top row is the selected row.
+// size of the pane. The top row is the selected row, in reverse video.
 //
 // A row's Values are its cells after the timestamp. When all of them are
 // empty, the row shows its Raw line across those columns instead, which
@@ -156,18 +156,8 @@ func showsRaw(row logstore.Row) bool {
 	return true
 }
 
-// Selected returns the selected row, which is the top one, and false when the
-// table is empty.
-func (m Model) Selected() (logstore.Row, bool) {
-	if len(m.rows) == 0 {
-		return logstore.Row{}, false
-	}
-
-	return m.rows[0], true
-}
-
 // View renders one line per row, cut to the width, then blank lines up to the
-// height. The selected row is in reverse video across the whole width.
+// height.
 func (m Model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
@@ -175,85 +165,116 @@ func (m Model) View() string {
 
 	lines := make([]string, m.height)
 
-	for i := range lines {
-		if i < len(m.rows) {
-			lines[i] = m.line(m.rows[i])
-		}
-	}
-
-	if len(m.rows) > 0 {
-		lines[0] = m.selectedLine(m.rows[0])
+	for i, row := range m.rows[:min(len(m.rows), m.height)] {
+		lines[i] = m.line(row, i == 0)
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-// selectedLine renders the selected row. It has no level color, because the
-// color's reset would end the reverse video partway through the line.
-func (m Model) selectedLine(row logstore.Row) string {
-	m.level = noColumn
-	line := m.line(row)
-	padding := strings.Repeat(" ", m.width-ansi.StringWidth(line))
-
-	return selectedStyle.Render(line + padding)
-}
-
-// line renders one row, cut to the width.
-func (m Model) line(row logstore.Row) string {
+// line renders one row, cut to the width. A selected row is in reverse video
+// and padded to the width, so the highlight spans the pane.
+func (m Model) line(row logstore.Row, selected bool) string {
 	c := clip{left: m.width}
 
 	c.value(row.TS.UTC().Format(timeLayout))
 	c.gap(separator)
 
+	var level span
 	if showsRaw(row) {
 		c.value(sanitize(row.Raw))
 	} else {
-		m.writeCells(&c, row.Values)
+		level = m.writeCells(&c, row.Values, selected)
+	}
+
+	if selected {
+		c.gap(strings.Repeat(" ", c.left))
+
+		return level.render(c.b.String(), selectedStyle)
 	}
 
 	// A row that ends in empty cells would otherwise end in spaces.
-	return strings.TrimRight(c.b.String(), " ")
+	return level.render(strings.TrimRight(c.b.String(), " "), lipgloss.Style{})
 }
 
 // writeCells writes the cells of a row. Each is padded to its column's width
-// except the last, which takes whatever the line has left.
-func (m Model) writeCells(c *clip, values []string) {
+// except the last, which takes whatever the line has left. It returns the span
+// of the level cell, which is empty when the row has no known level.
+func (m Model) writeCells(c *clip, values []string, selected bool) span {
+	var level span
+
 	for i, value := range values {
 		value = sanitize(value)
+		cell, padding := value, ""
 
-		if i == len(values)-1 {
-			c.value(m.renderCell(i, value, value))
-			return
+		if i < len(values)-1 {
+			limit := m.width / maxColumnShare
+			if i == m.message {
+				limit = max(limit, minMessageCap)
+			}
+
+			// The widths cover the rows being shown.
+			width := min(m.widths[i], limit)
+			cell = ansi.Truncate(value, width, ellipsis)
+			padding = strings.Repeat(" ", width-ansi.StringWidth(cell))
 		}
 
-		limit := m.width / maxColumnShare
-		if i == m.message {
-			limit = max(limit, minMessageCap)
+		start := c.b.Len()
+		c.value(cell)
+		textEnd := c.b.Len()
+		c.gap(padding)
+		cellEnd := c.b.Len()
+
+		if i < len(values)-1 {
+			c.gap(separator)
 		}
 
-		// The widths cover the rows being shown.
-		width := min(m.widths[i], limit)
-		cell := ansi.Truncate(value, width, ellipsis)
-		padding := strings.Repeat(" ", width-ansi.StringWidth(cell))
+		if i != m.level {
+			continue
+		}
 
-		// The color is chosen from the whole value, because a cut one such as
-		// "wa…" no longer names its level. It covers the text, not the padding.
-		c.value(m.renderCell(i, value, cell))
-		c.gap(padding + separator)
+		// The style is chosen from the whole value, because a cut one such as
+		// "wa…" no longer names its level.
+		style, ok := levelStyle(value)
+		if !ok {
+			continue
+		}
+
+		// The color covers the text. On the selected row it is the background
+		// of the whole cell, padding included.
+		level = span{start: start, end: textEnd, style: style}
+		if selected {
+			level.end = cellEnd
+			level.style = style.Reverse(true)
+		}
 	}
+
+	return level
 }
 
-// renderCell returns text colored by the log level that value names, when
-// column i is the level column and the level is known. Otherwise it returns
-// text.
-func (m Model) renderCell(i int, value, text string) string {
-	if i != m.level || text == "" {
-		return text
-	}
+// span is the part of a line, in bytes from start to end, that has its own
+// style.
+type span struct {
+	start, end int
+	style      lipgloss.Style
+}
 
-	style, ok := levelStyle(value)
-	if !ok {
-		return text
+// render returns line styled with base, except the span, which has its own
+// style. The span is cut to the line, which may have been trimmed.
+func (s span) render(line string, base lipgloss.Style) string {
+	end := min(s.end, len(line))
+	start := min(s.start, end)
+
+	return renderRun(base, line[:start]) +
+		renderRun(s.style, line[start:end]) +
+		renderRun(base, line[end:])
+}
+
+// renderRun returns text in style, or nothing when text is empty, so that an
+// empty run adds no escape sequences.
+func renderRun(style lipgloss.Style, text string) string {
+	if text == "" {
+		return ""
 	}
 
 	return style.Render(text)

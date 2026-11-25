@@ -392,25 +392,6 @@ func TestModel(t *testing.T) {
 		})
 	})
 
-	t.Run("Selected", func(t *testing.T) {
-		t.Run("is the top row", func(t *testing.T) {
-			m := New().SetSize(60, 2).SetRows(rawRows("newest", "older"))
-
-			row, ok := m.Selected()
-
-			require.True(t, ok)
-			require.Equal(t, "newest", row.Raw)
-		})
-
-		t.Run("is none when the table is empty", func(t *testing.T) {
-			m := New().SetSize(60, 2)
-
-			_, ok := m.Selected()
-
-			require.False(t, ok)
-		})
-	})
-
 	t.Run("selected row", func(t *testing.T) {
 		t.Run("is in reverse video, padded to the width", func(t *testing.T) {
 			m := New().SetSize(40, 2).SetRows(rawRows("newest", "older"))
@@ -432,9 +413,9 @@ func TestModel(t *testing.T) {
 			require.Equal(t, "\x1b[7m"+stamp+"012…\x1b[m", m.View())
 		})
 
-		t.Run("has no level color", func(t *testing.T) {
+		t.Run("reverses the whole level cell in its color", func(t *testing.T) {
 			m := New().SetSize(40, 2).SetLevelColumn(0).SetRows(cellRows(
-				[]string{"error", "a"},
+				[]string{"info", "a"},
 				[]string{"error", "b"},
 			))
 
@@ -442,11 +423,25 @@ func TestModel(t *testing.T) {
 
 			require.Equal(
 				t,
-				"\x1b[7m"+stamp+"error a"+strings.Repeat(" ", 40-len(stamp)-7)+
-					"\x1b[m",
+				"\x1b[7m"+stamp+"\x1b[m"+
+					"\x1b[7;38;5;4minfo \x1b[m"+
+					"\x1b[7m a"+strings.Repeat(" ", 40-len(stamp)-7)+"\x1b[m",
 				top,
 			)
 			require.Equal(t, stamp+"\x1b[38;5;1merror\x1b[m b", below)
+		})
+
+		t.Run("keeps an unknown level in plain reverse", func(t *testing.T) {
+			m := New().SetSize(40, 1).SetLevelColumn(0).SetRows(cellRows(
+				[]string{"notice", "a"},
+			))
+
+			require.Equal(
+				t,
+				"\x1b[7m"+stamp+"notice a"+strings.Repeat(" ", 40-len(stamp)-8)+
+					"\x1b[m",
+				m.View(),
+			)
 		})
 	})
 
