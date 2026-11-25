@@ -236,8 +236,9 @@ the same ingest path for both:
     column apart from a value cut with `…`.
   - A newline in a value shows as `↵`.
 - **Detail pane.** Enter opens the selected row's pretty-printed JSON in
-  place of the table. Long lines wrap. `↑`/`↓` and
-  PgUp/PgDn scroll it. Esc closes it.
+  place of the table. Names are blue, strings green, numbers yellow, booleans
+  cyan and `null` gray. Long lines wrap. `↑`/`↓` and PgUp/PgDn scroll it. Esc
+  closes it.
 - **Column picker**
   - `c` opens it, with type-to-narrow search over all known keys except
     `_raw`. Space toggles an entry. The timestamp isn't an entry, because it

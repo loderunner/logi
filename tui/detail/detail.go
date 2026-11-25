@@ -8,8 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-
-	"github.com/loderunner/logi/tui/termtext"
 )
 
 // indent is what each level of nesting adds to a line.
@@ -83,19 +81,20 @@ func (m Model) maxOffset() int {
 
 // Open returns the pane showing raw, the line a row came from. A JSON value
 // is indented with two spaces. It keeps its key order and its duplicate names,
-// and a string stays as written, so "\n" stays escaped. Any other line shows
-// as it is.
+// and a string stays as written, so "\n" stays escaped. The JSON is in color.
+// Any other line shows as it is.
 func (m Model) Open(raw string) Model {
 	v := jsontext.Value(raw)
 
-	err := v.Indent(jsontext.WithIndent(indent))
-	if err != nil {
-		v = jsontext.Value(raw)
-	}
+	var text []string
 
-	text := strings.Split(string(v), "\n")
-	for i, line := range text {
-		text[i] = termtext.Sanitize(line)
+	err := v.Indent(jsontext.WithIndent(indent))
+	if err == nil {
+		// colorize sanitizes, and must be the last step: the escape sequences
+		// it adds would not survive termtext.Sanitize.
+		text = strings.Split(colorize(v), "\n")
+	} else {
+		text = strings.Split(sanitizeLines(raw), "\n")
 	}
 
 	m.text = text
