@@ -148,9 +148,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.closeDetail(), nil
 		}
 
-		// The table's keys don't reach it while the detail pane covers it.
+		// While the detail pane covers the table, it gets every other key.
 		if m.showDetail {
-			return m.updateDetailKey(msg)
+			var cmd tea.Cmd
+			m.detail, cmd = m.detail.Update(msg)
+
+			return m, cmd
 		}
 
 		switch msg.String() {
@@ -204,24 +207,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err
 
 		return m.quit()
-	}
-
-	return m, nil
-}
-
-// updateDetailKey handles a key press while the detail pane is open. The
-// arrow and page keys scroll it, and the others do nothing. Scrolling is local
-// to the pane, so it runs no query.
-func (m Model) updateDetailKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up":
-		m.detail = m.detail.Scroll(-1)
-	case "down":
-		m.detail = m.detail.Scroll(1)
-	case "pgup":
-		m.detail = m.detail.Scroll(-m.height)
-	case "pgdown":
-		m.detail = m.detail.Scroll(m.height)
 	}
 
 	return m, nil

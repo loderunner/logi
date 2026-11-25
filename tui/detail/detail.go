@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/loderunner/logi/tui/termtext"
@@ -15,8 +16,8 @@ import (
 const indent = "  "
 
 // Model is the detail pane. It holds the lines of one row and the size of the
-// pane. Like table.Model, a setter returns a changed copy and the model has no
-// Update.
+// pane. A setter returns a changed copy, and Update handles the keys that
+// scroll it.
 type Model struct {
 	// text is the row's lines before wrapping. lines is text wrapped to the
 	// width, so the pane shows a value whole instead of cutting it with "…".
@@ -43,9 +44,32 @@ func (m Model) SetSize(width, height int) Model {
 	return m
 }
 
-// Scroll returns the pane scrolled down by n lines, or up when n is negative.
+// Update handles the keys that scroll the pane: the arrows by a line, and the
+// page keys by the pane's height. Scrolling runs no query, so it returns no
+// command.
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+
+	switch key.String() {
+	case "up":
+		m = m.scroll(-1)
+	case "down":
+		m = m.scroll(1)
+	case "pgup":
+		m = m.scroll(-m.height)
+	case "pgdown":
+		m = m.scroll(m.height)
+	}
+
+	return m, nil
+}
+
+// scroll returns the pane scrolled down by n lines, or up when n is negative.
 // It stops at the first line and at the last screenful.
-func (m Model) Scroll(n int) Model {
+func (m Model) scroll(n int) Model {
 	m.offset = min(max(m.offset+n, 0), m.maxOffset())
 
 	return m
