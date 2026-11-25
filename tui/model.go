@@ -141,13 +141,19 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if m.showDetail {
-			return m.updateDetailKey(msg)
-		}
-
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m.quit()
+		case "esc":
+			return m.closeDetail(), nil
+		}
+
+		// The table's keys don't reach it while the detail pane covers it.
+		if m.showDetail {
+			return m, nil
+		}
+
+		switch msg.String() {
 		case "enter":
 			return m.openDetail(), nil
 		case "up":
@@ -203,19 +209,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updateDetailKey handles a key press while the detail pane is open. Esc
-// closes the pane, and the other keys do nothing but quit.
-func (m Model) updateDetailKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "q", "ctrl+c":
-		return m.quit()
-	case "esc":
-		m.showDetail = false
-	}
-
-	return m, nil
-}
-
 // openDetail opens the detail pane on the selected row. An empty table has
 // none, so nothing opens.
 func (m Model) openDetail() Model {
@@ -226,6 +219,14 @@ func (m Model) openDetail() Model {
 
 	m.detail = m.detail.Open(row.Raw)
 	m.showDetail = true
+
+	return m
+}
+
+// closeDetail closes the detail pane and brings back the table. It does
+// nothing when the pane is closed.
+func (m Model) closeDetail() Model {
+	m.showDetail = false
 
 	return m
 }
