@@ -303,9 +303,11 @@ the same ingest path for both:
   - The hints use the short view of bubbles `help`: faint text, with `•`
     between hints. Each pane declares its keys once, as `key.Binding`s, and
     those both handle the keys and render the hints.
-  - The status is always shown whole. When the line is too narrow for every
-    hint next to the status, no hints are shown. They're never dropped one
-    by one or cut.
+  - The status is always shown whole. The hints fall back in steps, never
+    dropping single hints or cutting one:
+    1. All hints, when they fit next to the status.
+    2. Otherwise the pane keys only, without the `│` and the global tail.
+    3. Otherwise no hints.
 
 ### Configuration
 
@@ -410,4 +412,4 @@ one feature.
 | F18 | Enter on the table header flips newest at the top or the bottom, with `▼`/`▲` on the timestamp header, and it's remembered. | Order toggle, follow at either end, persisted. |
 | F19 | Ctrl+G, Ctrl+F and Ctrl+T hide and show the panes, and it's remembered. `/` brings the filter back. | Pane visibility in the config file, layout reflow, Ctrl+F removed from the text input's key map. |
 | F20 | `logi --hide-histogram /tmp/app.log` and `LOGI_HIDE_LOG=1 logi …`. | `--hide-*` flags and environment variables, through config precedence. |
-| F21 | Key hints for the focused pane on the left of the status bar, then `/`, `^G^F^T` and `q`. They change as focus moves. A terminal too narrow for all of them shows none, and the status stays whole. | Per-pane `key.Binding`s that drive both key handling and bubbles `help`, the global tail, and hiding all hints when they don't fit. |
+| F21 | Key hints for the focused pane on the left of the status bar, then `/`, `^G^F^T` and `q`. They change as focus moves. A narrower terminal drops the global keys, then all hints, and the status stays whole. | Per-pane `key.Binding`s that drive both key handling and bubbles `help`, the global tail, and the fallback from all hints to pane keys to none. |
