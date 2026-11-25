@@ -20,7 +20,7 @@ const (
 
 func TestColorize(t *testing.T) {
 	colorized := func(raw string) string {
-		return strings.Join(New().SetSize(80, 20).Open(raw).text, "\n")
+		return strings.Join(New().SetSize(80, 20).Open("", raw).text, "\n")
 	}
 
 	t.Run("colors each kind of token, not the punctuation", func(t *testing.T) {
@@ -98,11 +98,11 @@ func TestColorize(t *testing.T) {
 	t.Run("a wrapped string keeps its sequences valid", func(t *testing.T) {
 		raw := `{"a":"0123456789abcdefghij","b":1}`
 
-		colored := New().SetSize(12, 20).Open(raw)
-		plain := New().SetSize(12, 20).Open(raw)
+		colored := New().SetSize(12, 20).Open("", raw)
+		plain := New().SetSize(12, 20).Open("", raw)
 		plain.lines = wrap(
 			strings.Split(ansi.Strip(strings.Join(plain.text, "\n")), "\n"),
-			12,
+			colored.textWidth(),
 		)
 
 		require.Greater(t, len(colored.lines), 5)

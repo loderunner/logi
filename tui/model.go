@@ -220,7 +220,8 @@ func (m Model) openDetail() Model {
 		return m
 	}
 
-	m.detail = m.detail.Open(row.Raw)
+	// ingest numbers rows by their line in the input, from 1.
+	m.detail = m.detail.Open("Line "+formatCount(row.ID), row.Raw)
 	m.showDetail = true
 
 	return m

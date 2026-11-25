@@ -402,6 +402,15 @@ func TestModel(t *testing.T) {
 				Values: []string{"old"},
 			}
 
+			// firstLine returns the first line of text in the detail
+			// pane, inside its frame.
+			firstLine := func(m Model) string {
+				lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+				line := strings.TrimSuffix(lines[1], "│")
+
+				return strings.TrimRight(strings.TrimPrefix(line, "│ "), " ")
+			}
+
 			t.Run("Enter opens the top row's JSON", func(t *testing.T) {
 				m, _ := withRows(t, size, newest, older)
 
@@ -411,13 +420,12 @@ func TestModel(t *testing.T) {
 
 				lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 				require.Equal(t, []string{
-					"{",
-					`  "msg": "hi",`,
-					`  "n": [`,
-					"    1,",
-					"    2",
+					"╭─ Line 2 ─────────────────────────────╮",
+					"│ {                                    │",
+					`│   "msg": "hi",                       │`,
+					`│   "n": [                             │`,
+					"╰──────────────────────────────────────╯",
 				}, lines[:5])
-				require.NotContains(t, lines[0], "0001-01-01")
 			})
 
 			t.Run("Esc brings back the table", func(t *testing.T) {
@@ -443,10 +451,7 @@ func TestModel(t *testing.T) {
 
 					m, _ = update(t, m, enter)
 
-					first, _, _ := strings.Cut(
-						ansi.Strip(m.View().Content), "\n",
-					)
-					require.Equal(t, "not json    �[31mred", first)
+					require.Equal(t, "not json    �[31mred", firstLine(m))
 				},
 			)
 
@@ -483,8 +488,9 @@ func TestModel(t *testing.T) {
 			)
 
 			t.Run("the arrow and page keys scroll", func(t *testing.T) {
-				// The pane is 5 lines tall, and the mock expects one Page
-				// call, for the first query, so scrolling sends no query.
+				// The pane shows 3 lines inside its frame, and the mock
+				// expects one Page call, for the first query, so scrolling
+				// sends no query.
 				m, _ := withRows(t, size, logstore.Row{
 					ID:     1,
 					Raw:    `{"a":[1,2,3,4,5,6,7,8]}`,
@@ -492,13 +498,6 @@ func TestModel(t *testing.T) {
 				})
 				m, _ = update(t, m, enter)
 
-				firstLine := func(m Model) string {
-					first, _, _ := strings.Cut(
-						ansi.Strip(m.View().Content), "\n",
-					)
-
-					return first
-				}
 				require.Equal(t, "{", firstLine(m))
 
 				for _, step := range []struct {
@@ -506,11 +505,13 @@ func TestModel(t *testing.T) {
 					want string
 				}{
 					{tea.KeyDown, `  "a": [`},
+					{tea.KeyPgDown, "    3,"},
+					{tea.KeyUp, "    2,"},
 					{tea.KeyPgDown, "    5,"},
-					{tea.KeyUp, "    4,"},
-					{tea.KeyPgDown, "    6,"},
-					{tea.KeyPgDown, "    6,"},
-					{tea.KeyPgUp, "    1,"},
+					{tea.KeyPgDown, "    8"},
+					{tea.KeyPgDown, "    8"},
+					{tea.KeyPgUp, "    5,"},
+					{tea.KeyPgUp, "    2,"},
 					{tea.KeyPgUp, "{"},
 				} {
 					var cmd tea.Cmd

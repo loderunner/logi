@@ -12,7 +12,7 @@ import (
 func TestModel(t *testing.T) {
 	t.Run("Open", func(t *testing.T) {
 		t.Run("indents with two spaces, keeping key order", func(t *testing.T) {
-			m := New().SetSize(40, 8).Open(`{"b":1,"a":{"c":[true,null]}}`)
+			m := New().SetSize(40, 8).Open("", `{"b":1,"a":{"c":[true,null]}}`)
 
 			want := "{\n" +
 				"  \"b\": 1,\n" +
@@ -27,7 +27,7 @@ func TestModel(t *testing.T) {
 		})
 
 		t.Run("keeps duplicate keys", func(t *testing.T) {
-			m := New().SetSize(40, 4).Open(`{"a":1,"a":2}`)
+			m := New().SetSize(40, 4).Open("", `{"a":1,"a":2}`)
 
 			require.Equal(
 				t,
@@ -37,7 +37,7 @@ func TestModel(t *testing.T) {
 		})
 
 		t.Run("keeps a newline in a string escaped", func(t *testing.T) {
-			m := New().SetSize(40, 3).Open(`{"a":"x\ny"}`)
+			m := New().SetSize(40, 3).Open("", `{"a":"x\ny"}`)
 
 			require.Equal(
 				t,
@@ -47,7 +47,7 @@ func TestModel(t *testing.T) {
 		})
 
 		t.Run("indents a top-level array", func(t *testing.T) {
-			m := New().SetSize(40, 4).Open(`[1,{"a":2}]`)
+			m := New().SetSize(40, 4).Open("", `[1,{"a":2}]`)
 
 			require.Equal(
 				t,
@@ -57,28 +57,28 @@ func TestModel(t *testing.T) {
 		})
 
 		t.Run("shows a line that isn't JSON as is", func(t *testing.T) {
-			m := New().SetSize(40, 2).Open("starting up, 3 workers")
+			m := New().SetSize(40, 2).Open("", "starting up, 3 workers")
 
-			require.Equal(t, "starting up, 3 workers\n", ansi.Strip(m.View()))
+			require.Equal(t, "starting up, 3 workers\n", ansi.Strip(m.body()))
 		})
 
 		t.Run("shows a line with trailing content as is", func(t *testing.T) {
-			m := New().SetSize(40, 1).Open(`{"a":1} extra`)
+			m := New().SetSize(40, 1).Open("", `{"a":1} extra`)
 
-			require.Equal(t, `{"a":1} extra`, ansi.Strip(m.View()))
+			require.Equal(t, `{"a":1} extra`, ansi.Strip(m.body()))
 		})
 
 		t.Run("replaces control characters", func(t *testing.T) {
-			m := New().SetSize(40, 1).Open("not json\t\x1b[31mred")
+			m := New().SetSize(40, 1).Open("", "not json\t\x1b[31mred")
 
-			require.Equal(t, "not json    �[31mred", ansi.Strip(m.View()))
+			require.Equal(t, "not json    �[31mred", ansi.Strip(m.body()))
 		})
 
 		t.Run(
 			"replaces control characters in a JSON string",
 			func(t *testing.T) {
 				// Indent accepts invalid UTF-8 and C1 controls in a string.
-				m := New().SetSize(40, 3).Open("{\"a\":\"x\u009by\xff\"}")
+				m := New().SetSize(40, 3).Open("", "{\"a\":\"x\u009by\xff\"}")
 
 				require.Equal(
 					t,
@@ -90,91 +90,91 @@ func TestModel(t *testing.T) {
 	})
 
 	t.Run("wraps a long line", func(t *testing.T) {
-		m := New().SetSize(12, 5).Open(`{"a":"0123456789abcdef"}`)
+		m := New().SetSize(16, 7).Open("", `{"a":"0123456789abcdef"}`)
 
 		require.Equal(
 			t,
 			"{\n  \"a\": \"0123\n456789abcdef\n\"\n}",
-			ansi.Strip(m.View()),
+			ansi.Strip(m.body()),
 		)
 	})
 
 	t.Run("SetSize wraps the lines again", func(t *testing.T) {
-		m := New().SetSize(40, 3).Open(`{"a":"0123456789"}`)
-		require.Equal(t, "{\n  \"a\": \"0123456789\"\n}", ansi.Strip(m.View()))
+		m := New().SetSize(40, 3).Open("", `{"a":"0123456789"}`)
+		require.Equal(t, "{\n  \"a\": \"0123456789\"\n}", ansi.Strip(m.body()))
 
-		m = m.SetSize(10, 4)
+		m = m.SetSize(14, 6)
 		require.Equal(
 			t,
 			"{\n  \"a\": \"01\n23456789\"\n}",
-			ansi.Strip(m.View()),
+			ansi.Strip(m.body()),
 		)
 	})
 
 	t.Run("a pane that has no size shows nothing", func(t *testing.T) {
-		m := New().Open(`{"a":1}`)
+		m := New().Open("", `{"a":1}`)
 
 		require.Empty(t, ansi.Strip(m.View()))
 
 		// Opening before the size is known must not lose the lines.
 		m = m.SetSize(20, 3)
-		require.Equal(t, "{\n  \"a\": 1\n}", ansi.Strip(m.View()))
+		require.Equal(t, "{\n  \"a\": 1\n}", ansi.Strip(m.body()))
 	})
 
-	t.Run("View pads to the height", func(t *testing.T) {
-		m := New().SetSize(20, 5).Open(`{"a":1}`)
+	t.Run("pads to the height", func(t *testing.T) {
+		m := New().SetSize(24, 7).Open("", `{"a":1}`)
 
-		require.Equal(t, "{\n  \"a\": 1\n}\n\n", ansi.Strip(m.View()))
+		require.Equal(t, "{\n  \"a\": 1\n}\n\n", ansi.Strip(m.body()))
 	})
 
-	t.Run("View cuts to the height", func(t *testing.T) {
-		m := New().SetSize(20, 2).Open(`{"a":1}`)
+	t.Run("cuts to the height", func(t *testing.T) {
+		m := New().SetSize(20, 2).Open("", `{"a":1}`)
 
-		require.Equal(t, "{\n  \"a\": 1", ansi.Strip(m.View()))
+		require.Equal(t, "{\n  \"a\": 1", ansi.Strip(m.body()))
 	})
 
 	t.Run("scroll", func(t *testing.T) {
 		// Nine lines in a pane of three.
 		open := func() Model {
-			return New().SetSize(20, 3).Open(`{"a":[1,2,3,4,5]}`)
+			return New().SetSize(20, 3).Open("", `{"a":[1,2,3,4,5]}`)
 		}
 
 		t.Run("moves the first line shown", func(t *testing.T) {
 			m := open().scroll(2)
 
-			require.Equal(t, "    1,\n    2,\n    3,", ansi.Strip(m.View()))
+			require.Equal(t, "    1,\n    2,\n    3,", ansi.Strip(m.body()))
 
 			m = m.scroll(-1)
-			require.Equal(t, "  \"a\": [\n    1,\n    2,", ansi.Strip(m.View()))
+			require.Equal(t, "  \"a\": [\n    1,\n    2,", ansi.Strip(m.body()))
 		})
 
 		t.Run("stops at the top", func(t *testing.T) {
 			m := open().scroll(-5)
 
-			require.Equal(t, "{\n  \"a\": [\n    1,", ansi.Strip(m.View()))
+			require.Equal(t, "{\n  \"a\": [\n    1,", ansi.Strip(m.body()))
 		})
 
 		t.Run("stops at the last screenful", func(t *testing.T) {
 			m := open().scroll(100)
 
-			require.Equal(t, "    5\n  ]\n}", ansi.Strip(m.View()))
+			require.Equal(t, "    5\n  ]\n}", ansi.Strip(m.body()))
 
 			// Going back up starts from the last screenful, not from 100.
 			m = m.scroll(-1)
-			require.Equal(t, "    4,\n    5\n  ]", ansi.Strip(m.View()))
+			require.Equal(t, "    4,\n    5\n  ]", ansi.Strip(m.body()))
 		})
 
 		t.Run("does nothing when the lines fit", func(t *testing.T) {
-			m := New().SetSize(20, 5).Open(`{"a":1}`).scroll(3)
+			m := New().SetSize(24, 7).Open("", `{"a":1}`).scroll(3)
 
-			require.Equal(t, "{\n  \"a\": 1\n}\n\n", ansi.Strip(m.View()))
+			require.Equal(t, "{\n  \"a\": 1\n}\n\n", ansi.Strip(m.body()))
 		})
 	})
 
 	t.Run("Update", func(t *testing.T) {
 		// Nine lines in a pane of three, scrolled to the middle.
 		middle := func() Model {
-			return New().SetSize(20, 3).Open(`{"a":[1,2,3,4,5]}`).scroll(3)
+			return New().SetSize(20, 3).Open("", `{"a":[1,2,3,4,5]}`).scroll(3)
 		}
 
 		tests := map[string]struct {
@@ -192,7 +192,7 @@ func TestModel(t *testing.T) {
 				m, cmd := middle().Update(tea.KeyPressMsg{Code: tt.key})
 
 				require.Nil(t, cmd)
-				require.Equal(t, tt.want, ansi.Strip(m.View()))
+				require.Equal(t, tt.want, ansi.Strip(m.body()))
 			})
 		}
 
@@ -205,23 +205,23 @@ func TestModel(t *testing.T) {
 	})
 
 	t.Run("SetSize clamps the offset", func(t *testing.T) {
-		m := New().SetSize(20, 3).Open(`{"a":[1,2,3,4,5]}`).scroll(100)
+		m := New().SetSize(20, 3).Open("", `{"a":[1,2,3,4,5]}`).scroll(100)
 
-		m = m.SetSize(20, 5)
-		require.Equal(t, "    3,\n    4,\n    5\n  ]\n}", ansi.Strip(m.View()))
+		m = m.SetSize(24, 7)
+		require.Equal(t, "    3,\n    4,\n    5\n  ]\n}", ansi.Strip(m.body()))
 
 		m = m.SetSize(20, 20)
 		require.Equal(
 			t,
 			"{\n  \"a\": [\n    1,\n    2,\n    3,\n    4,\n    5\n  ]\n}",
-			strings.TrimRight(ansi.Strip(m.View()), "\n"),
+			strings.TrimRight(ansi.Strip(m.body()), "\n"),
 		)
 	})
 
 	t.Run("Open resets the offset", func(t *testing.T) {
-		m := New().SetSize(20, 3).Open(`{"a":[1,2,3,4,5]}`).scroll(100)
+		m := New().SetSize(20, 3).Open("", `{"a":[1,2,3,4,5]}`).scroll(100)
 
-		m = m.Open(`{"b":[1,2,3,4,5]}`)
-		require.Equal(t, "{\n  \"b\": [\n    1,", ansi.Strip(m.View()))
+		m = m.Open("", `{"b":[1,2,3,4,5]}`)
+		require.Equal(t, "{\n  \"b\": [\n    1,", ansi.Strip(m.body()))
 	})
 }
