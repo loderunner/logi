@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/loderunner/logi/tui/termtext"
@@ -15,13 +16,16 @@ import (
 const indent = "  "
 
 // Model is the detail pane. It holds the lines of one row and the size of the
-// pane. Like table.Model, a setter returns a changed copy and the model has no
-// Update.
+// pane. A setter returns a changed copy, and Update handles the keys that
+// scroll it.
 type Model struct {
 	// text is the row's lines before wrapping. lines is text wrapped to the
 	// width, so the pane shows a value whole instead of cutting it with "…".
 	text, lines   []string
 	width, height int
+	// offset is the index in lines of the first line shown. It stays within
+	// [0, maxOffset].
+	offset int
 }
 
 // New returns an empty pane.
@@ -35,8 +39,46 @@ func (m Model) SetSize(width, height int) Model {
 	m.width = width
 	m.height = height
 	m.lines = wrap(m.text, width)
+	m.offset = min(m.offset, m.maxOffset())
 
 	return m
+}
+
+// Update handles the keys that scroll the pane: the arrows by a line, and the
+// page keys by the pane's height. Scrolling runs no query, so it returns no
+// command.
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+
+	switch key.String() {
+	case "up":
+		m = m.scroll(-1)
+	case "down":
+		m = m.scroll(1)
+	case "pgup":
+		m = m.scroll(-m.height)
+	case "pgdown":
+		m = m.scroll(m.height)
+	}
+
+	return m, nil
+}
+
+// scroll returns the pane scrolled down by n lines, or up when n is negative.
+// It stops at the first line and at the last screenful.
+func (m Model) scroll(n int) Model {
+	m.offset = min(max(m.offset+n, 0), m.maxOffset())
+
+	return m
+}
+
+// maxOffset is the offset that shows the last line at the bottom of the pane,
+// or 0 when all lines fit.
+func (m Model) maxOffset() int {
+	return max(len(m.lines)-m.height, 0)
 }
 
 // Open returns the pane showing raw, the line a row came from. A JSON value
@@ -58,19 +100,20 @@ func (m Model) Open(raw string) Model {
 
 	m.text = text
 	m.lines = wrap(text, m.width)
+	m.offset = 0
 
 	return m
 }
 
-// View renders the first lines that fit the height, then blank lines up to
-// the height.
+// View renders the lines that fit the height, starting at the offset, then
+// blank lines up to the height.
 func (m Model) View() string {
 	if m.width <= 0 || m.height <= 0 {
 		return ""
 	}
 
 	lines := make([]string, m.height)
-	copy(lines, m.lines)
+	copy(lines, m.lines[m.offset:])
 
 	return strings.Join(lines, "\n")
 }

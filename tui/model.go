@@ -148,9 +148,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.closeDetail(), nil
 		}
 
-		// The table's keys don't reach it while the detail pane covers it.
+		// While the detail pane covers the table, it gets every other key.
 		if m.showDetail {
-			return m, nil
+			var cmd tea.Cmd
+			m.detail, cmd = m.detail.Update(msg)
+
+			return m, cmd
 		}
 
 		switch msg.String() {
