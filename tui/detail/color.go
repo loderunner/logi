@@ -13,8 +13,7 @@ import (
 )
 
 // Styles of the JSON tokens. Punctuation and whitespace keep the terminal's
-// foreground. Red is left out of the booleans, because it reads as an error
-// level in the table.
+// foreground.
 var (
 	nameStyle = lipgloss.NewStyle().
 			Bold(true).
@@ -63,14 +62,22 @@ func walk(text []byte) (string, error) {
 
 	for {
 		kind := dec.PeekKind()
-		structural := kind == '{' || kind == '[' || kind == '}' || kind == ']'
+		structural := kind == jsontext.KindBeginObject ||
+			kind == jsontext.KindBeginArray ||
+			kind == jsontext.KindEndObject ||
+			kind == jsontext.KindEndArray
 
 		var (
 			tokenLen int
 			err      error
 		)
 
-		style := valueStyle(kind, !structural && isName(dec))
+		// Only a string can be a name, and the decoder must be asked before
+		// it reads the token.
+		style := valueStyle(kind)
+		if kind == jsontext.KindString && isName(dec) {
+			style = nameStyle
+		}
 
 		if structural {
 			_, err = dec.ReadToken()
@@ -116,22 +123,20 @@ func walk(text []byte) (string, error) {
 func isName(dec *jsontext.Decoder) bool {
 	kind, n := dec.StackIndex(dec.StackDepth())
 
-	return kind == '{' && n%2 == 0
+	return kind == jsontext.KindBeginObject && n%2 == 0
 }
 
-// valueStyle returns the style of a token of the given kind, which is
+// valueStyle returns the style of a value of the given kind, which is
 // meaningful for scalars only.
-func valueStyle(kind jsontext.Kind, name bool) lipgloss.Style {
-	switch {
-	case name:
-		return nameStyle
-	case kind == '"':
+func valueStyle(kind jsontext.Kind) lipgloss.Style {
+	switch kind {
+	case jsontext.KindString:
 		return stringStyle
-	case kind == '0':
+	case jsontext.KindNumber:
 		return numberStyle
-	case kind == 't' || kind == 'f':
+	case jsontext.KindTrue, jsontext.KindFalse:
 		return boolStyle
-	case kind == 'n':
+	case jsontext.KindNull:
 		return nullStyle
 	default:
 		return lipgloss.Style{}
