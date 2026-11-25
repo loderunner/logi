@@ -431,6 +431,23 @@ func TestModel(t *testing.T) {
 			require.Equal(t, stamp+"\x1b[38;5;1merror\x1b[m b", below)
 		})
 
+		t.Run(
+			"reverses a level that is the last column to the edge",
+			func(t *testing.T) {
+				m := New().SetSize(40, 1).SetLevelColumn(1).SetRows(cellRows(
+					[]string{"a", "warn"},
+				))
+
+				require.Equal(
+					t,
+					"\x1b[7m"+stamp+"a \x1b[m"+
+						"\x1b[7;38;5;3mwarn"+strings.Repeat(" ", 40-len(stamp)-6)+
+						"\x1b[m",
+					m.View(),
+				)
+			},
+		)
+
 		t.Run("keeps an unknown level in plain reverse", func(t *testing.T) {
 			m := New().SetSize(40, 1).SetLevelColumn(0).SetRows(cellRows(
 				[]string{"notice", "a"},

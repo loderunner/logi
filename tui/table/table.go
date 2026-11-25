@@ -198,7 +198,7 @@ func (m Model) line(row logstore.Row, selected bool) string {
 }
 
 // writeCells writes the cells of a row. Each is padded to its column's width
-// except the last, which takes whatever the line has left. It returns the span
+// except the last, which is padded to the end of the line. It returns the span
 // of the level cell, which is empty when the row has no known level.
 func (m Model) writeCells(c *clip, values []string, selected bool) span {
 	var level span
@@ -222,6 +222,11 @@ func (m Model) writeCells(c *clip, values []string, selected bool) span {
 		start := c.b.Len()
 		c.value(cell)
 		textEnd := c.b.Len()
+
+		if i == len(values)-1 {
+			padding = strings.Repeat(" ", c.left)
+		}
+
 		c.gap(padding)
 		cellEnd := c.b.Len()
 
