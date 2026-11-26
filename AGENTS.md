@@ -3,9 +3,9 @@
 ## What this is
 
 logi is a terminal UI for JSONL logs: Kibana as `htop`. It reads a file or
-stdin, keeps reading as input grows, and shows the lines in a table backed by
-an in-memory DuckDB. See [PLAN.md](PLAN.md) for the design and the
-deliverables (E1, E2…).
+stdin, keeps reading as input grows, and shows the lines in a table backed by an
+in-memory DuckDB. See [PLAN.md](PLAN.md) for the design and the deliverables
+(E1, E2…).
 
 ## Layout
 
@@ -24,16 +24,16 @@ tui/                    the bubbletea root model
   mock_/                generated mocks for tui's interfaces
 ```
 
-Each feature package owns its slice. Interfaces are declared in the package
-that uses them (`ingest.Appender`, `tui.Rows`), and the concrete types in
-`logstore` satisfy them. `main.go` connects the two.
+Each feature package owns its slice. Interfaces are declared in the package that
+uses them (`ingest.Appender`, `tui.Rows`), and the concrete types in `logstore`
+satisfy them. `main.go` connects the two.
 
 ## Tasks
 
-Tooling: `brew install go go-task golangci-lint`. Building needs a C
-toolchain, because DuckDB uses cgo. On a Linux remote machine with Nix, run
-`scripts/setup.sh` instead of brew; it is idempotent. mockgen is a Go tool in `go.mod`, so
-there is nothing else to install. Use `task`, not raw `go` or
+Tooling: `brew install go go-task golangci-lint`. Building needs a C toolchain,
+because DuckDB uses cgo. On a Linux remote machine with Nix, run
+`scripts/setup.sh` instead of brew; it is idempotent. mockgen is a Go tool in
+`go.mod`, so there is nothing else to install. Use `task`, not raw `go` or
 `golangci-lint`, except for single tests.
 
 - `task generate`: `go generate ./...`, which regenerates the mocks. Run it
@@ -64,9 +64,9 @@ works, ship a thin end-to-end slice first (a tracer bullet, like E1), then grow
 it. Do not build for speculative needs (YAGNI).
 
 Make failures loud and early. Crash early rather than carry on with bad state,
-and return errors instead of swallowing them. Use assertions and tests to
-state what must be true, and fix the root cause rather than the symptom. Debug
-by reproducing the problem and isolating it, not by trying random changes. Know
+and return errors instead of swallowing them. Use assertions and tests to state
+what must be true, and fix the root cause rather than the symptom. Debug by
+reproducing the problem and isolating it, not by trying random changes. Know
 your tools well enough that the next change is cheap: automate repeated steps,
 and let `task` and the linters do the checking so that you can think about the
 design.
@@ -86,16 +86,39 @@ and can be improved beats a perfect one that does not.
   the version in `go.mod` before you use it, instead of working from memory:
   APIs change between versions. `go doc <pkg>` and the module cache
   (`go env GOMODCACHE`) hold the exact code you build against.
-- **bubbletea models** use value receivers and shallow copies of the model by
-  default. Clone at the boundaries: when a slice or map leaves `Update`
-  inside a `tea.Cmd` closure, and when two owners would otherwise share a
-  mutable collection. Everywhere else, mutate your own copy freely.
-- Cmds do their work in the returned closure and report errors as messages,
-  as in the bubbletea commands tutorial.
-- Mocks are generated with mockgen into `mock_/` subpackages and committed.
-  The package is named `<parent>_mock`.
+- Mocks are generated with mockgen into `mock_/` subpackages and committed. The
+  package is named `<parent>_mock`.
 - `fmt.Print*` is banned (`forbidigo`) because it corrupts the TUI. Write to
   `os.Stderr` with `fmt.Fprint*` when a command needs to print.
 - SQL lives only in `logstore`.
 - Formatting Markdown and YAML files with Prettier is recommended but not
   mandatory. Markdown should be formatted with `proseWrap: always`.
+
+### bubbletea models
+
+The models form a tree, like iOS view controllers. The root `tui.Model` is the
+only `tea.Model`. Each pane is a child model in its own package.
+
+- A child is shaped like a bubbles component: `Update(tea.Msg) (Model, tea.Cmd)`
+  returns its concrete type and `View()` returns a string. It has an `Init` when
+  it has a command to start. A child can be setters and `View` only. It gets
+  `Update` once it can handle a message with its own state alone.
+- A source (a store, a query with its generation number and cancel function)
+  lives in the deepest model that uses it. When panes share data, their common
+  ancestor holds it if it has reason to orchestrate it. Otherwise, when their
+  access patterns differ, each pane holds its own.
+- The parent owns layout, visibility and focus, and orchestrates in `Update` and
+  `View`. It pushes each child's size with `SetSize`. It calls `Focus` and
+  `Blur` only on a child that draws differently while focused.
+- The parent routes every message explicitly: it switches on the type and calls
+  the child that needs it. Keys go to the focused or shown child. A message the
+  parent routes is exported.
+- A child tells its parent about something the parent owns (closing, a new
+  layout, a failure) by returning a `tea.Cmd` that yields an exported message of
+  its own package, such as `detail.CloseMsg` or `table.ErrMsg`.
+- Models use value receivers and shallow copies by default. Clone at the
+  boundaries: when a slice or map leaves `Update` inside a `tea.Cmd` closure,
+  and when two owners would otherwise share a mutable collection. Everywhere
+  else, mutate your own copy freely.
+- Cmds do their work in the returned closure and report errors as messages, as
+  in the bubbletea commands tutorial.
