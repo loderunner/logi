@@ -45,6 +45,9 @@ type PageQuery struct {
 	Limit int
 	// Keys are the keys to read a value for in each row.
 	Keys []string
+	// Filter keeps only the rows it matches, before From and Move count
+	// them. Nil keeps every row.
+	Filter Filter
 }
 
 // Page is a window of rows, newest first.
@@ -64,15 +67,26 @@ type Page struct {
 // q.Limit rows when the store has that many. A move to newer rows that
 // reaches or passes the newest row returns a nil From.
 //
+// Only the rows that q.Filter keeps count, for the move and for the page.
+// From needn't match the filter: the page starts at the first match at or
+// below it, so the page is short when fewer than q.Limit matches are there,
+// and moving newer from it reaches the newer matches.
+//
 // The page is read after the move, in a separate query, so rows that arrive
 // in between can show in a page that follows the newest row.
 func (s *Store) Page(ctx context.Context, q PageQuery) (Page, error) {
-	from, err := s.move(ctx, q.From, q.Move, q.Limit)
+	// Render the filter once, so that a column added between the two queries
+	// can't make them disagree.
+	s.mu.RLock()
+	filter := render(q.Filter, s.columns)
+	s.mu.RUnlock()
+
+	from, err := s.move(ctx, q.From, q.Move, q.Limit, filter)
 	if err != nil {
 		return Page{}, err
 	}
 
-	rows, err := s.rowsFrom(ctx, from, q.Limit, q.Keys)
+	rows, err := s.rowsFrom(ctx, from, q.Limit, q.Keys, filter)
 	if err != nil {
 		return Page{}, err
 	}
@@ -83,18 +97,19 @@ func (s *Store) Page(ctx context.Context, q PageQuery) (Page, error) {
 // move returns the key that is n rows from the key from, which is the newest
 // row when nil. A positive n goes to older rows, a negative n to newer rows.
 // A nil result is the newest row. Moving older stops when fewer than limit
-// rows would remain.
+// rows would remain. Only the rows that filter keeps count.
 func (s *Store) move(
 	ctx context.Context,
 	from *Key,
 	n int,
 	limit int,
+	filter condition,
 ) (*Key, error) {
 	switch {
 	case n > 0:
-		return s.moveOlder(ctx, from, n, limit)
+		return s.moveOlder(ctx, from, n, limit, filter)
 	case n < 0 && from != nil:
-		return s.moveNewer(ctx, *from, -n)
+		return s.moveNewer(ctx, *from, -n, filter)
 	default:
 		return from, nil
 	}
@@ -107,8 +122,9 @@ func (s *Store) moveOlder(
 	from *Key,
 	n int,
 	limit int,
+	filter condition,
 ) (*Key, error) {
-	keys, err := s.keysAround(ctx, from, "<=", "DESC", n+limit)
+	keys, err := s.keysAround(ctx, from, "<=", "DESC", n+limit, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -124,11 +140,16 @@ func (s *Store) moveOlder(
 
 // moveNewer moves from n rows to newer rows. It returns nil when that reaches
 // the newest row, or goes past it.
-func (s *Store) moveNewer(ctx context.Context, from Key, n int) (*Key, error) {
+func (s *Store) moveNewer(
+	ctx context.Context,
+	from Key,
+	n int,
+	filter condition,
+) (*Key, error) {
 	// The keys start at the row just above from, so index n-1 is n rows newer.
 	// A key at index n would be a row beyond the destination, which proves
 	// the destination isn't the newest row.
-	keys, err := s.keysAround(ctx, &from, ">", "ASC", n+1)
+	keys, err := s.keysAround(ctx, &from, ">", "ASC", n+1, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -141,15 +162,17 @@ func (s *Store) moveNewer(ctx context.Context, from Key, n int) (*Key, error) {
 }
 
 // keysAround returns the keys of rows whose key compares to from with op, in
-// the given order, up to limit of them. A nil from matches every row.
+// the given order, up to limit of them. A nil from matches every row. Only
+// the rows that filter keeps count.
 func (s *Store) keysAround(
 	ctx context.Context,
 	from *Key,
 	op string,
 	order string,
 	limit int,
+	filter condition,
 ) ([]Key, error) {
-	where, args := keyFilter(from, op)
+	where, args := whereClause(keyFilter(from, op), filter)
 
 	query := fmt.Sprintf(
 		"SELECT id, ts FROM logs%s ORDER BY ts %s, id %s LIMIT ?",
@@ -189,12 +212,11 @@ func (s *Store) keysAround(
 	return keys, nil
 }
 
-// keyFilter returns a WHERE clause, with a leading space, that keeps the rows
-// whose (ts, id) compares to k with op, which is "<=" or ">". It returns
-// nothing for a nil k, which matches every row.
-func keyFilter(k *Key, op string) (string, []any) {
+// keyFilter returns a condition that keeps the rows whose (ts, id) compares to
+// k with op, which is "<=" or ">". A nil k keeps every row.
+func keyFilter(k *Key, op string) condition {
 	if k == nil {
-		return "", nil
+		return condition{}
 	}
 
 	ts := k.TS.UnixNano()
@@ -202,21 +224,21 @@ func keyFilter(k *Key, op string) (string, []any) {
 
 	// Spelling out the comparison is about 3x faster than comparing the row
 	// value, as in (ts, id) <= (?, ?).
-	return fmt.Sprintf(
-			" WHERE ts %s ? OR (ts = ? AND id %s ?)",
-			strict,
-			op,
-		),
-		[]any{ts, ts, k.ID}
+	return condition{
+		sql:  fmt.Sprintf("ts %s ? OR (ts = ? AND id %s ?)", strict, op),
+		args: []any{ts, ts, k.ID},
+	}
 }
 
 // rowsFrom returns up to limit rows, newest first, starting at from, which is
-// the newest row when nil. Each Row has one value per entry in keys.
+// the newest row when nil. Each Row has one value per entry in keys. Only the
+// rows that filter keeps count.
 func (s *Store) rowsFrom(
 	ctx context.Context,
 	from *Key,
 	limit int,
 	keys []string,
+	filter condition,
 ) ([]Row, error) {
 	var query strings.Builder
 
@@ -237,7 +259,7 @@ func (s *Store) rowsFrom(
 
 	s.mu.RUnlock()
 
-	where, args := keyFilter(from, "<=")
+	where, args := whereClause(keyFilter(from, "<="), filter)
 
 	query.WriteString(" FROM logs")
 	query.WriteString(where)
