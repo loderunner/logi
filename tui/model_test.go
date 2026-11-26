@@ -60,7 +60,9 @@ func withRows(
 }
 
 func TestModel(t *testing.T) {
-	size := tea.WindowSizeMsg{Width: 40, Height: 6}
+	// The bar and the status bar take two of the 7 lines, which leaves a table
+	// 5 rows high.
+	size := tea.WindowSizeMsg{Width: 40, Height: 7}
 
 	t.Run("Update", func(t *testing.T) {
 		t.Run(
@@ -68,7 +70,6 @@ func TestModel(t *testing.T) {
 			func(t *testing.T) {
 				ctrl := gomock.NewController(t)
 				mockRows := tui_mock.NewMockRows(ctrl)
-				// The status bar takes one of the 6 lines.
 				mockRows.EXPECT().
 					Page(gomock.Any(), logstore.PageQuery{Limit: 5, Keys: []string{"_raw"}}).
 					Return(logstore.Page{Rows: []logstore.Row{{ID: 2, Raw: "newer", Values: []string{""}}, {ID: 1, Raw: "older", Values: []string{""}}}}, nil)
@@ -404,10 +405,10 @@ func TestModel(t *testing.T) {
 			}
 
 			// firstLine returns the first line of text in the detail
-			// pane, inside its frame.
+			// pane, inside its frame, under the bar and the frame's top.
 			firstLine := func(m Model) string {
 				lines := strings.Split(ansi.Strip(m.View().Content), "\n")
-				line := strings.TrimSuffix(lines[1], "│")
+				line := strings.TrimSuffix(lines[2], "│")
 
 				return strings.TrimRight(strings.TrimPrefix(line, "│ "), " ")
 			}
@@ -421,12 +422,13 @@ func TestModel(t *testing.T) {
 
 				lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 				require.Equal(t, []string{
+					"/ field:value                           ",
 					"╭─ Detail: 2026-11-25 09:00:58.405 ────╮",
 					"│ {                                    │",
 					`│   "msg": "hi",                       │`,
 					`│   "n": [                             │`,
 					"╰──────────────────────────────────────╯",
-				}, lines[:5])
+				}, lines[:6])
 			})
 
 			t.Run("Esc brings back the table", func(t *testing.T) {
@@ -577,7 +579,7 @@ func TestModel(t *testing.T) {
 				m, _ := withRows(t, size, newest)
 				m, _ = update(t, m, enter)
 
-				m, _ = update(t, m, tea.WindowSizeMsg{Width: 8, Height: 6})
+				m, _ = update(t, m, tea.WindowSizeMsg{Width: 8, Height: 7})
 
 				require.Contains(
 					t,
@@ -676,8 +678,356 @@ func TestModel(t *testing.T) {
 		})
 	})
 
+	t.Run("filter bar", func(t *testing.T) {
+		slash := tea.KeyPressMsg{Code: '/', Text: "/"}
+		enter := tea.KeyPressMsg{Code: tea.KeyEnter}
+		esc := tea.KeyPressMsg{Code: tea.KeyEscape}
+		ctrlC := tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
+
+		// typed returns m after the keys that type text.
+		typed := func(t *testing.T, m Model, text string) Model {
+			t.Helper()
+
+			for _, r := range text {
+				m, _ = update(t, m, tea.KeyPressMsg{Code: r, Text: string(r)})
+			}
+
+			return m
+		}
+
+		// quits reports whether cmd quits the program.
+		quits := func(cmd tea.Cmd) bool {
+			if cmd == nil {
+				return false
+			}
+
+			_, ok := cmd().(tea.QuitMsg)
+
+			return ok
+		}
+
+		// withBar returns a model of the given size with a mock that
+		// records every page query, and the table showing no rows.
+		withBar := func(
+			t *testing.T,
+			size tea.WindowSizeMsg,
+		) (Model, *[]logstore.PageQuery) {
+			t.Helper()
+
+			mockRows := tui_mock.NewMockRows(gomock.NewController(t))
+
+			var asked []logstore.PageQuery
+
+			mockRows.EXPECT().
+				Page(gomock.Any(), gomock.Any()).
+				DoAndReturn(func(_ context.Context, q logstore.PageQuery) (logstore.Page, error) {
+					asked = append(asked, q)
+					return logstore.Page{}, nil
+				}).
+				AnyTimes()
+
+			m := New(mockRows, Options{FileSize: 100})
+			m, cmd := update(t, m, size)
+			cmd()
+
+			return m, &asked
+		}
+
+		t.Run("the table has focus at startup", func(t *testing.T) {
+			m, _ := withRows(t, size)
+
+			require.Equal(t, focusTable, m.focus)
+			require.False(t, m.bar.Focused())
+		})
+
+		t.Run(
+			"shows the bar above the table and the status bar",
+			func(t *testing.T) {
+				m, _ := withRows(
+					t,
+					size,
+					logstore.Row{ID: 1, Raw: "a", Values: []string{""}},
+				)
+
+				lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+				require.Len(t, lines, 7)
+				require.Equal(
+					t,
+					"/ field:value                           ",
+					lines[0],
+				)
+				require.Contains(t, lines[1], "0001-01-01 00:00:00.000 a")
+				require.Contains(t, lines[6], "rows")
+			},
+		)
+
+		t.Run("/ focuses the bar", func(t *testing.T) {
+			m, _ := withRows(t, size)
+
+			m, cmd := update(t, m, slash)
+			require.Nil(t, cmd)
+			require.Equal(t, focusFilter, m.focus)
+			require.True(t, m.bar.Focused())
+
+			// The bar's cursor is on its row, after the prompt.
+			cursor := m.View().Cursor
+			require.NotNil(t, cursor)
+			require.Equal(t, 2, cursor.X)
+			require.Equal(t, 0, cursor.Y)
+
+			// The slash itself isn't typed.
+			require.Empty(t, m.bar.Value())
+		})
+
+		t.Run("shows no cursor while the table has focus", func(t *testing.T) {
+			m, _ := withRows(t, size)
+
+			require.Nil(t, m.View().Cursor)
+		})
+
+		t.Run("types q and the other printable keys", func(t *testing.T) {
+			m, _ := withRows(t, size)
+			m, _ = update(t, m, slash)
+
+			m = typed(t, m, "level:error q /+-=c")
+
+			require.Equal(t, "level:error q /+-=c", m.bar.Value())
+			require.Equal(t, focusFilter, m.focus)
+		})
+
+		t.Run("Enter keeps the text and returns focus to the table",
+			func(t *testing.T) {
+				m, _ := withRows(t, size)
+				m, _ = update(t, m, slash)
+				m = typed(t, m, "level:error")
+
+				m, cmd := update(t, m, enter)
+				require.Nil(t, cmd)
+				require.Equal(t, focusTable, m.focus)
+				require.False(t, m.bar.Focused())
+				require.Equal(t, "level:error", m.bar.Value())
+				require.Nil(t, m.View().Cursor)
+				require.Contains(
+					t,
+					ansi.Strip(m.View().Content),
+					"/ level:error",
+				)
+
+				// The table takes the keys again, so q quits.
+				_, cmd = update(t, m, tea.KeyPressMsg{Code: 'q', Text: "q"})
+				require.True(t, quits(cmd))
+			},
+		)
+
+		t.Run("Enter doesn't query", func(t *testing.T) {
+			m, asked := withBar(t, size)
+			require.Len(t, *asked, 1)
+
+			m, _ = update(t, m, slash)
+			m = typed(t, m, "level:error")
+			_, cmd := update(t, m, enter)
+
+			require.Nil(t, cmd)
+			require.Len(t, *asked, 1)
+		})
+
+		t.Run("Esc reverts to the committed text", func(t *testing.T) {
+			m, _ := withRows(t, size)
+			m, _ = update(t, m, slash)
+			m = typed(t, m, "level:error")
+			m, _ = update(t, m, enter)
+
+			m, _ = update(t, m, slash)
+			m = typed(t, m, " x")
+			require.Equal(t, "level:error x", m.bar.Value())
+
+			m, cmd := update(t, m, esc)
+			require.Nil(t, cmd)
+			require.Equal(t, focusTable, m.focus)
+			require.False(t, m.bar.Focused())
+			require.Equal(t, "level:error", m.bar.Value())
+		})
+
+		t.Run("Esc before any commit empties the bar", func(t *testing.T) {
+			m, _ := withRows(t, size)
+			m, _ = update(t, m, slash)
+			m = typed(t, m, "abc")
+
+			m, _ = update(t, m, esc)
+			require.Equal(t, focusTable, m.focus)
+			require.Empty(t, m.bar.Value())
+		})
+
+		t.Run("ctrl+c quits from the bar", func(t *testing.T) {
+			m, _ := withRows(t, size)
+			m, _ = update(t, m, slash)
+			m = typed(t, m, "abc")
+
+			_, cmd := update(t, m, ctrlC)
+			require.True(t, quits(cmd))
+		})
+
+		t.Run("q quits from the table, not from the bar", func(t *testing.T) {
+			m, _ := withRows(t, size)
+			q := tea.KeyPressMsg{Code: 'q', Text: "q"}
+
+			_, cmd := update(t, m, q)
+			require.True(t, quits(cmd))
+
+			m, _ = update(t, m, slash)
+			_, cmd = update(t, m, q)
+			require.False(t, quits(cmd))
+		})
+
+		t.Run("the table's keys go to the bar while it has focus",
+			func(t *testing.T) {
+				m, asked := withBar(t, size)
+				m, _ = update(t, m, slash)
+
+				for _, k := range []rune{tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown} {
+					m, _ = update(t, m, tea.KeyPressMsg{Code: k})
+				}
+
+				require.Len(t, *asked, 1)
+			},
+		)
+
+		t.Run("a paste goes to the bar", func(t *testing.T) {
+			m, _ := withRows(t, size)
+			m, _ = update(t, m, slash)
+
+			m, _ = update(t, m, tea.PasteMsg{Content: "level:error"})
+			require.Equal(t, "level:error", m.bar.Value())
+		})
+
+		t.Run(
+			"a paste is ignored while the table has focus",
+			func(t *testing.T) {
+				m, _ := withRows(t, size)
+
+				m, _ = update(t, m, tea.PasteMsg{Content: "level:error"})
+				require.Empty(t, m.bar.Value())
+			},
+		)
+
+		t.Run("/ does nothing in the detail pane", func(t *testing.T) {
+			m, _ := withRows(t, size, logstore.Row{
+				ID:     1,
+				Raw:    `{"msg":"hi"}`,
+				Values: []string{"hi"},
+			})
+			m, _ = update(t, m, enter)
+			require.True(t, m.showDetail)
+
+			m, cmd := update(t, m, slash)
+			require.Nil(t, cmd)
+			require.True(t, m.showDetail)
+			require.Equal(t, focusTable, m.focus)
+			require.False(t, m.bar.Focused())
+			require.Nil(t, m.View().Cursor)
+		})
+
+		t.Run("the detail pane still closes on Esc and quits on q",
+			func(t *testing.T) {
+				m, _ := withRows(t, size, logstore.Row{
+					ID:     1,
+					Raw:    `{"msg":"hi"}`,
+					Values: []string{"hi"},
+				})
+				m, _ = update(t, m, enter)
+
+				_, cmd := update(t, m, tea.KeyPressMsg{Code: 'q', Text: "q"})
+				require.True(t, quits(cmd))
+
+				m, _ = update(t, m, esc)
+				require.False(t, m.showDetail)
+			},
+		)
+
+		t.Run(
+			"the page is two lines shorter than the window",
+			func(t *testing.T) {
+				m, asked := withBar(t, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+				require.Equal(t, 8, (*asked)[0].Limit)
+				require.Equal(t, 8, m.tableHeight())
+			},
+		)
+
+		t.Run("an error line shrinks the table by one row", func(t *testing.T) {
+			m, asked := withBar(t, tea.WindowSizeMsg{Width: 40, Height: 10})
+
+			m.bar = m.bar.SetError("unexpected }")
+			m, cmd := m.layout()
+			require.NotNil(t, cmd)
+			cmd()
+
+			require.Equal(t, 7, (*asked)[1].Limit)
+
+			lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+			require.Len(t, lines, 10)
+			require.Equal(t, "unexpected }", strings.TrimSpace(lines[1]))
+			require.Contains(t, lines[9], "rows")
+		})
+
+		t.Run("the next edit clears the error and grows the table",
+			func(t *testing.T) {
+				m, asked := withBar(t, tea.WindowSizeMsg{Width: 40, Height: 10})
+				m, _ = update(t, m, slash)
+				m = typed(t, m, "ab")
+
+				m.bar = m.bar.SetError("bad")
+				m, cmd := m.layout()
+				cmd()
+
+				// A cursor move keeps the error, and the table's size.
+				m, cmd = update(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
+				require.Nil(t, cmd)
+				require.Equal(t, 2, m.bar.Height())
+
+				m, cmd = update(t, m, tea.KeyPressMsg{Code: 'x', Text: "x"})
+				require.NotNil(t, cmd)
+				cmd()
+
+				require.Equal(t, 1, m.bar.Height())
+				require.Equal(t, 8, (*asked)[len(*asked)-1].Limit)
+			},
+		)
+
+		t.Run("Esc clears the error and grows the table", func(t *testing.T) {
+			m, asked := withBar(t, tea.WindowSizeMsg{Width: 40, Height: 10})
+			m, _ = update(t, m, slash)
+
+			m.bar = m.bar.SetError("bad")
+			m, cmd := m.layout()
+			cmd()
+
+			m, cmd = update(t, m, esc)
+			require.NotNil(t, cmd)
+			cmd()
+
+			require.Equal(t, 8, (*asked)[len(*asked)-1].Limit)
+		})
+
+		t.Run("an error resizes the detail pane too", func(t *testing.T) {
+			m, _ := withBar(t, tea.WindowSizeMsg{Width: 40, Height: 10})
+			m.table = m.table.SetRows([]logstore.Row{
+				{ID: 1, Raw: `{"msg":"hi"}`, Values: []string{"hi"}},
+			})
+			m, _ = update(t, m, enter)
+
+			m.bar = m.bar.SetError("bad")
+			m, _ = m.layout()
+
+			// Bar, error, frame (7 lines) and status bar.
+			lines := strings.Split(ansi.Strip(m.View().Content), "\n")
+			require.Len(t, lines, 10)
+			require.Equal(t, "╰", string([]rune(lines[8])[0]))
+		})
+	})
+
 	t.Run("scrolling", func(t *testing.T) {
-		// A table 5 rows high: the status bar takes one of the 6 lines.
+		// A table 5 rows high: the bar and the status bar take two of the 7 lines.
 		const page = 5
 
 		// asks records the query of every Page call and answers with answer.
@@ -857,7 +1207,7 @@ func TestModel(t *testing.T) {
 			from := &logstore.Key{ID: 5}
 			m.from = from
 
-			m, cmd := update(t, m, tea.WindowSizeMsg{Width: 40, Height: 11})
+			m, cmd := update(t, m, tea.WindowSizeMsg{Width: 40, Height: 12})
 			cmd()
 
 			require.Equal(t, from, (*asked)[0].From)

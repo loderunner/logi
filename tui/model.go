@@ -1,6 +1,6 @@
-// Package tui is logi's terminal interface: a table of rows, newest first,
-// a detail pane that shows one row's JSON in place of the table, and a status
-// bar.
+// Package tui is logi's terminal interface: a filter bar, a table of rows,
+// newest first, a detail pane that shows one row's JSON in place of the table,
+// and a status bar. One of the bar and the table has focus and takes the keys.
 package tui
 
 import (
@@ -20,6 +20,7 @@ import (
 	"github.com/loderunner/logi/ingest"
 	"github.com/loderunner/logi/logstore"
 	"github.com/loderunner/logi/tui/detail"
+	"github.com/loderunner/logi/tui/filterbar"
 	"github.com/loderunner/logi/tui/table"
 )
 
@@ -67,14 +68,34 @@ type sample struct {
 	rows int64
 }
 
-// Model is the root bubbletea model: the table, the detail pane, the status bar
-// and the page queries that fill the table.
+// focus is the pane that takes the keys.
+type focus int
+
+const (
+	// focusTable is the table, and the detail pane that covers it.
+	focusTable focus = iota
+	// focusFilter is the filter bar.
+	focusFilter
+)
+
+// Model is the root bubbletea model: the filter bar, the table, the detail
+// pane, the status bar and the page queries that fill the table.
 type Model struct {
 	source Rows
 	opts   Options
 
-	table         table.Model
+	// bar is the top line, with its error line under it when it has one. focus
+	// says whether it or the table takes the keys.
+	bar   filterbar.Model
+	focus focus
+
+	table table.Model
+	// width is the width of the window. height is the number of lines above
+	// the status bar, which the bar and the table share, as the table takes
+	// what the bar leaves. paneHeight is the height that layout last gave the
+	// table and the detail pane.
 	width, height int
+	paneHeight    int
 
 	// detail holds its own copy of the row it shows, so the table can keep
 	// loading pages while the pane is open. showDetail is true while the pane
@@ -120,6 +141,7 @@ func New(source Rows, opts Options) Model {
 	return Model{
 		source:  source,
 		opts:    opts,
+		bar:     filterbar.New(),
 		table:   table.New(),
 		detail:  detail.New(),
 		keys:    defaultKeys(nil, ""),
@@ -141,39 +163,13 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m.quit()
-		case "esc":
-			return m.closeDetail(), nil
-		}
-
-		// While the detail pane covers the table, it gets every other key.
-		if m.showDetail {
-			var cmd tea.Cmd
-			m.detail, cmd = m.detail.Update(msg)
-
-			return m, cmd
-		}
-
-		switch msg.String() {
-		case "enter":
-			return m.openDetail(), nil
-		case "up":
-			return m.scroll(-1)
-		case "down":
-			return m.scroll(1)
-		case "pgup":
-			return m.scroll(-m.height)
-		case "pgdown":
-			return m.scroll(m.height)
-		}
+		return m.key(msg)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = max(msg.Height-1, 0) // the status bar takes a line
-		m.table = m.table.SetSize(m.width, m.height)
-		m.detail = m.detail.SetSize(m.width, m.height)
+		m.bar = m.bar.SetWidth(m.width)
+		m = m.resize()
 
 		return m.refresh()
 
@@ -207,9 +203,119 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.err = msg.Err
 
 		return m.quit()
+
+	default:
+		// What the bar sends itself, such as a paste, comes back here.
+		return m.updateBar(msg)
 	}
 
 	return m, nil
+}
+
+// key routes a key press. Ctrl+C always quits. The bar takes every other key
+// while it has focus, q included, except Enter and Esc, which leave it. The
+// detail pane takes every key but Esc and q, and `/` does nothing there. The
+// table has the rest.
+func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return m.quit()
+	}
+
+	if m.focus == focusFilter {
+		switch msg.String() {
+		case "enter":
+			// The bar commits its text, but nothing filters by it yet.
+			m.bar = m.bar.Commit().Blur()
+			m.focus = focusTable
+
+			return m.layout()
+		case "esc":
+			m.bar = m.bar.Revert().Blur()
+			m.focus = focusTable
+
+			return m.layout()
+		}
+
+		return m.updateBar(msg)
+	}
+
+	// While the detail pane covers the table, it gets every other key.
+	if m.showDetail {
+		switch msg.String() {
+		case "esc":
+			return m.closeDetail(), nil
+		case "q":
+			return m.quit()
+		}
+
+		var cmd tea.Cmd
+		m.detail, cmd = m.detail.Update(msg)
+
+		return m, cmd
+	}
+
+	switch msg.String() {
+	case "/":
+		var cmd tea.Cmd
+
+		m.bar, cmd = m.bar.Focus()
+		m.focus = focusFilter
+
+		return m, cmd
+	case "q":
+		return m.quit()
+	case "enter":
+		return m.openDetail(), nil
+	case "up":
+		return m.scroll(-1)
+	case "down":
+		return m.scroll(1)
+	case "pgup":
+		return m.scroll(-m.tableHeight())
+	case "pgdown":
+		return m.scroll(m.tableHeight())
+	}
+
+	return m, nil
+}
+
+// updateBar sends msg to the bar and makes room for the error line that it
+// may have shown or cleared.
+func (m Model) updateBar(msg tea.Msg) (Model, tea.Cmd) {
+	var barCmd tea.Cmd
+
+	m.bar, barCmd = m.bar.Update(msg)
+
+	m, layoutCmd := m.layout()
+
+	return m, tea.Batch(barCmd, layoutCmd)
+}
+
+// tableHeight is the number of lines that the bar leaves for the table.
+func (m Model) tableHeight() int {
+	return max(m.height-m.bar.Height(), 0)
+}
+
+// resize gives the table and the detail pane the height that the bar leaves.
+func (m Model) resize() Model {
+	m.paneHeight = m.tableHeight()
+	m.table = m.table.SetSize(m.width, m.paneHeight)
+	m.detail = m.detail.SetSize(m.width, m.paneHeight)
+
+	return m
+}
+
+// layout makes the table and the detail pane fit the lines the bar leaves,
+// after the bar changed. When their height changes, it also loads the rows
+// again, because the page holds as many rows as the table shows.
+func (m Model) layout() (Model, tea.Cmd) {
+	if m.tableHeight() == m.paneHeight {
+		return m, nil
+	}
+
+	m = m.resize()
+
+	return m.refresh()
 }
 
 // openDetail opens the detail pane on the selected row. An empty table has
@@ -235,7 +341,7 @@ func (m Model) closeDetail() Model {
 }
 
 // quit stops the in-flight query and ends the program.
-func (m Model) quit() (tea.Model, tea.Cmd) {
+func (m Model) quit() (Model, tea.Cmd) {
 	if m.cancel != nil {
 		m.cancel()
 	}
@@ -245,7 +351,7 @@ func (m Model) quit() (tea.Model, tea.Cmd) {
 
 // scroll asks to move the view by n rows, positive for older rows, and
 // refreshes the page.
-func (m Model) scroll(n int) (tea.Model, tea.Cmd) {
+func (m Model) scroll(n int) (Model, tea.Cmd) {
 	m.move += n
 
 	return m.refresh()
@@ -254,13 +360,13 @@ func (m Model) scroll(n int) (tea.Model, tea.Cmd) {
 // refresh cancels the in-flight page query and starts a new one. The query
 // starts from the top row of the last page that arrived, and asks for all the
 // scrolling since then.
-func (m Model) refresh() (tea.Model, tea.Cmd) {
+func (m Model) refresh() (Model, tea.Cmd) {
 	if m.cancel != nil {
 		m.cancel()
 		m.cancel = nil
 	}
 
-	if m.height <= 0 {
+	if m.tableHeight() <= 0 {
 		return m, nil
 	}
 
@@ -274,7 +380,7 @@ func (m Model) refresh() (tea.Model, tea.Cmd) {
 	q := logstore.PageQuery{
 		From:  m.from,
 		Move:  m.move,
-		Limit: m.height,
+		Limit: m.tableHeight(),
 		Keys:  keys,
 	}
 
@@ -358,7 +464,7 @@ func (m Model) View() tea.View {
 
 	v.AltScreen = true
 
-	if m.width <= 0 || m.height <= 0 {
+	if m.width <= 0 || m.tableHeight() <= 0 {
 		return v
 	}
 
@@ -376,7 +482,10 @@ func (m Model) View() tea.View {
 		pane = m.detail.View()
 	}
 
-	v.SetContent(pane + "\n" + status)
+	v.SetContent(m.bar.View() + "\n" + pane + "\n" + status)
+
+	// The bar is the top line, so its cursor needs no offset.
+	v.Cursor = m.bar.Cursor()
 
 	return v
 }

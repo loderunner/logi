@@ -1,0 +1,175 @@
+// Package filterbar is the one-line filter input above the table, with an
+// error line under it when the filter text is wrong.
+package filterbar
+
+import (
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/loderunner/logi/tui/termtext"
+)
+
+const (
+	// prompt comes before the text.
+	prompt = "/ "
+	// placeholder shows what a filter looks like while the bar is empty.
+	placeholder = "field:value"
+)
+
+// Model is the filter bar. It holds the text being edited, the text at the
+// last Commit, and the message of the error under the bar, if any. A setter
+// returns a changed copy, and Update handles the keys that edit the text.
+type Model struct {
+	input textinput.Model
+	// width is the width of the whole bar. The input's own width counts the
+	// text only.
+	width int
+	// committed is the text at the last Commit, which Revert restores.
+	committed string
+	// err is the message under the bar, or "" when there is none.
+	err string
+}
+
+// New returns an empty bar that doesn't have focus.
+func New() Model {
+	input := textinput.New()
+	input.Prompt = prompt
+	input.Placeholder = placeholder
+
+	// The terminal draws and blinks a real cursor, so the bar has no blink
+	// timer to keep running, and the cursor stays right with wide characters.
+	input.SetVirtualCursor(false)
+
+	plain := lipgloss.NewStyle()
+	faint := lipgloss.NewStyle().Faint(true)
+
+	styles := input.Styles()
+	styles.Focused.Prompt = plain.Bold(true)
+	styles.Focused.Text = plain
+	styles.Focused.Placeholder = faint
+	styles.Blurred.Prompt = faint
+	styles.Blurred.Text = plain
+	styles.Blurred.Placeholder = faint
+	input.SetStyles(styles)
+
+	return Model{input: input}
+}
+
+// SetWidth returns the bar resized to w columns.
+func (m Model) SetWidth(w int) Model {
+	m.width = w
+
+	// The view pads the text to its width plus one column, for the cursor
+	// after the last character. A width of 0 or less means no limit, which
+	// is wrong for a bar too narrow for its prompt, so View cuts the line.
+	m.input.SetWidth(w - lipgloss.Width(prompt) - 1)
+
+	return m
+}
+
+// Focus returns the bar with focus, and the command that starts its cursor.
+func (m Model) Focus() (Model, tea.Cmd) {
+	cmd := m.input.Focus()
+
+	return m, cmd
+}
+
+// Blur returns the bar without focus. The text stays.
+func (m Model) Blur() Model {
+	m.input.Blur()
+
+	return m
+}
+
+// Focused reports whether the bar has focus, which means it takes the keys.
+func (m Model) Focused() bool {
+	return m.input.Focused()
+}
+
+// Value returns the text in the bar.
+func (m Model) Value() string {
+	return m.input.Value()
+}
+
+// Commit returns the bar with its text recorded as the one Revert restores.
+func (m Model) Commit() Model {
+	m.committed = m.input.Value()
+
+	return m
+}
+
+// Revert returns the bar with the text of the last Commit, or empty before
+// the first, and no error.
+func (m Model) Revert() Model {
+	m.input.SetValue(m.committed)
+	m.input.CursorEnd()
+	m.err = ""
+
+	return m
+}
+
+// SetError returns the bar with msg in a line under it, or with no such line
+// when msg is empty. The next change to the text clears it.
+func (m Model) SetError(msg string) Model {
+	m.err = msg
+
+	return m
+}
+
+// Height is the number of lines View takes: 1, or 2 while an error shows.
+func (m Model) Height() int {
+	if m.err != "" {
+		return 2
+	}
+
+	return 1
+}
+
+// Update handles the keys that edit the text and move the cursor, and the
+// messages that the input sends itself. A change to the text clears the error.
+// The bar ignores every message while it doesn't have focus.
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	before := m.input.Value()
+
+	var cmd tea.Cmd
+
+	m.input, cmd = m.input.Update(msg)
+	if m.input.Value() != before {
+		m.err = ""
+	}
+
+	return m, cmd
+}
+
+// View draws the bar, then the error line when there is one. Each line is
+// cut to the width of the bar.
+func (m Model) View() string {
+	line := m.cut(m.input.View())
+	if m.err == "" {
+		return line
+	}
+
+	msg := lipgloss.NewStyle().
+		Foreground(lipgloss.ANSIColor(ansi.Red)).
+		Render(termtext.Sanitize(m.err))
+
+	return line + "\n" + m.cut(msg)
+}
+
+// Cursor returns the terminal cursor for the bar, in the bar's own
+// coordinates, or nil while the bar doesn't have focus.
+func (m Model) Cursor() *tea.Cursor {
+	return m.input.Cursor()
+}
+
+// cut cuts s to the width of the bar. It does nothing before the width is
+// known.
+func (m Model) cut(s string) string {
+	if m.width <= 0 {
+		return s
+	}
+
+	return ansi.Truncate(s, m.width, "…")
+}
