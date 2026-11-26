@@ -15,6 +15,7 @@ scripts/setup.sh        sets up a Linux dev machine (the cloud environment runs 
 config/                 flags, LOGI_ variables and the JSON config file
 cmd/genlogs/            streams synthetic logs to stdout, or writes a sized batch
 logstore/               the only package that writes SQL (DuckDB)
+kql/                    parses filter text into a logstore.Filter
 ingest/                 reads lines (file, stdin) and appends them to the store
   mock_/                generated mocks for ingest's interfaces
 tui/                    the bubbletea root model
