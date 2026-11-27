@@ -75,7 +75,9 @@ the same ingest path for both:
     `logstore` replaces invalid bytes with U+FFFD.
 - Every key column is `VARCHAR`, so a key can't change type between lines.
   Numeric comparisons compile to `TRY_CAST(col AS DOUBLE)`, which the
-  benchmark measured as fast as typed columns.
+  benchmark measured as fast as typed columns. An exact match compiles to
+  `COALESCE(col, '') = ?`, which a later benchmark measured as fast as
+  `col = ?`.
 - No indexes. Columnar scans are fast enough at this scale.
 - Nothing persists between runs except preferences (see
   [Configuration](#configuration)).
@@ -177,8 +179,26 @@ the same ingest path for both:
   the filter.
 - The time range isn't part of KQL. It comes from the histogram window and
   is combined with the filter (AND).
-- The filter is compiled to a SQL `WHERE` fragment with bound parameters.
-  Column names are quoted identifiers.
+- `kql` parses the text straight into a `logstore.Filter`, a tree of
+  immutable values, with no separate AST. `logstore` renders the filter as a
+  `WHERE` fragment with bound parameters and quoted generated column names, on
+  every query, so a key that appears later starts matching. Only `logstore`
+  writes SQL or sees column names.
+- Grammar decisions:
+  - A value is bare, up to whitespace, or double-quoted with `\"` and `\\`
+    escapes. A field name can be quoted too.
+  - The field is the exact, case-sensitive flattened key, which may be dotted,
+    such as `http.method`.
+  - There are no spaces around `:`.
+  - A row with no value for a key counts as `""`, as the table shows it, so
+    `field:""` matches rows where the key is missing, `null` or an empty
+    string.
+  - A key not seen yet matches nothing, until it appears.
+  - An empty filter shows every row.
+  - On a parse error, the last good filter stays applied.
+  - A new filter keeps the view anchored on its `(ts, id)`. When fewer matches
+    than a page sit at or below the anchor, the page is short, and moving
+    newer reaches the newer matches.
 
 ### UI
 
@@ -353,8 +373,8 @@ the same ingest path for both:
 | `main` (module root) | Wiring: config, input, store, program. |
 | `config/` | viper and pflag loading, precedence, writing changed keys. |
 | `ingest/` | Reading and following input, parsing and flattening lines, timestamp detection, batching. |
-| `logstore/` | The DuckDB lifecycle (memory limit, temp directory), schema, the Appender, and the window, count and histogram queries. The only package that writes SQL. |
-| `kql/` | Filter parser, AST, and compiling to a `logstore` filter. |
+| `logstore/` | The DuckDB lifecycle (memory limit, temp directory), schema, the Appender, and the window, count and histogram queries. It also turns filters into SQL. The only package that writes SQL. |
+| `kql/` | Filter parser, parsing straight into a `logstore.Filter`, with no separate AST. |
 | `tui/` | Root model: layout, focus, key map, status bar. |
 | `tui/table/`, `tui/histogram/`, `tui/filterbar/`, `tui/picker/`, `tui/detail/` | One package per pane. |
 | `cmd/genlogs/` | Synthetic log generator: streams like `tail -f` by default, writes a sized batch with `-size-mb`. For manual runs. |
@@ -393,7 +413,7 @@ one feature.
 | # | You see | Built |
 |---|---|---|
 | F1 | Enter opens a row's pretty-printed JSON in a frame titled with its timestamp, Esc closes it. | `tui/detail`. |
-| F2 | `/` focuses a filter bar. `level:error` plus Enter filters the table. Typos show an inline error. | `tui/filterbar`, `kql` with a single `field:value` term, compiling to `WHERE`, cancelling superseded queries. |
+| F2 | `/` focuses a filter bar. `level:error` plus Enter filters the table. Typos show an inline error. | `tui/filterbar`, `kql` with a single `field:value` term parsed into a `logstore.Filter`, which `logstore` renders as `WHERE`, cancelling superseded queries. |
 | F3 | `service:billing AND (level:warn OR level:error)`, `NOT level:debug`. | Boolean operators, parentheses, implicit AND. |
 | F4 | `http.status>=500`. | Numeric comparisons with `TRY_CAST`. |
 | F5 | `msg:cache*`, `msg:*timeout`, `msg:*reset*`. | Wildcards at the front and back. |
