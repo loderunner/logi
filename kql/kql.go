@@ -3,13 +3,18 @@
 // The parser builds filters directly, with no AST of its own: a filter is
 // already an immutable tree of values, and only logstore knows how to run it.
 //
-// The grammar so far is one term, "field:value":
+// The grammar so far is one term, "field:value", in EBNF:
 //
-//	filter = ws [ term ws ] EOF
-//	term   = field ":" value
-//	field  = quoted | 1*( char except whitespace, ":" and a leading '"' )
-//	value  = quoted | 1*( char except whitespace )
-//	quoted = '"' *( char except '"' and '\' | '\"' | '\\' ) '"'
+//	filter     = space* ( term space* )?
+//	term       = field ":" value
+//	field      = quoted | bare_field
+//	value      = quoted | bare_value
+//	bare_field = ( char - ( space | ":" | '"' ) ) ( char - ( space | ":" ) )*
+//	bare_value = ( char - ( space | '"' ) ) ( char - space )*
+//	quoted     = '"' ( ( char - ( '"' | '\' ) ) | '\"' | '\\' )* '"'
+//
+// A filter matches the whole input. A char is any rune, a space is a rune for
+// which [unicode.IsSpace] is true, and A - B matches what A matches except B.
 //
 // A field is the exact, case-sensitive flattened key, such as "http.method".
 // A bare value runs to the next whitespace and reserves no characters, so
@@ -76,7 +81,7 @@ func (p *parser) skipSpace() {
 	}
 }
 
-// filter = ws [ term ws ] EOF
+// filter = space* ( term space* )?
 func (p *parser) filter() (logstore.Filter, error) {
 	p.skipSpace()
 
@@ -119,7 +124,8 @@ func (p *parser) term() (logstore.Filter, error) {
 	return logstore.Match{Key: key, Value: value}, nil
 }
 
-// field = quoted | 1*( char except whitespace, ":" and a leading '"' )
+// field      = quoted | bare_field
+// bare_field = ( char - ( space | ":" | '"' ) ) ( char - ( space | ":" ) )*
 func (p *parser) field() (string, error) {
 	if p.at('"') {
 		return p.quoted()
@@ -137,7 +143,8 @@ func (p *parser) field() (string, error) {
 	return string(p.in[start:p.pos]), nil
 }
 
-// value = quoted | 1*( char except whitespace )
+// value      = quoted | bare_value
+// bare_value = ( char - ( space | '"' ) ) ( char - space )*
 func (p *parser) value() (string, error) {
 	if p.at('"') {
 		return p.quoted()
@@ -155,7 +162,7 @@ func (p *parser) value() (string, error) {
 	return string(p.in[start:p.pos]), nil
 }
 
-// quoted = '"' *( char except '"' and '\' | '\"' | '\\' ) '"'
+// quoted = '"' ( ( char - ( '"' | '\' ) ) | '\"' | '\\' )* '"'
 func (p *parser) quoted() (string, error) {
 	open := p.pos
 	p.pos++ // the opening quote
