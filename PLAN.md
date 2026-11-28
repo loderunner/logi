@@ -413,7 +413,7 @@ one feature.
 | # | You see | Built |
 |---|---|---|
 | F1 | Enter opens a row's pretty-printed JSON in a frame titled with its timestamp, Esc closes it. | `tui/detail`. |
-| F2 | `/` focuses a filter bar. `level:error` plus Enter filters the table. Typos show an inline error. | `tui/filterbar`, `kql` with a single `field:value` term parsed into a `logstore.Filter`, which `logstore` renders as `WHERE`, cancelling superseded queries. |
+| F2 | `/` focuses a filter bar. `level:error` plus Enter filters the table. Typos show an inline error. | `tui/filterbar`, `kql` with a single `field:value` term parsed into a `logstore.Filter`, which `logstore` renders as `WHERE`, cancelling superseded queries. The root model applies it on Enter, and shows a parse error under the bar. |
 | F3 | `service:billing AND (level:warn OR level:error)`, `NOT level:debug`. | Boolean operators, parentheses, implicit AND. |
 | F4 | `http.status>=500`. | Numeric comparisons with `TRY_CAST`. |
 | F5 | `msg:cache*`, `msg:*timeout`, `msg:*reset*`. | Wildcards at the front and back. |

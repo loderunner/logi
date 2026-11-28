@@ -801,8 +801,7 @@ func TestModel(t *testing.T) {
 				m, _ = update(t, m, slash)
 				m = typed(t, m, "level:error")
 
-				m, cmd := update(t, m, enter)
-				require.Nil(t, cmd)
+				m, _ = update(t, m, enter)
 				require.Equal(t, focusTable, m.focus)
 				require.False(t, m.bar.Focused())
 				require.Equal(t, "level:error", m.bar.Value())
@@ -814,22 +813,275 @@ func TestModel(t *testing.T) {
 				)
 
 				// The table takes the keys again, so q quits.
-				_, cmd = update(t, m, tea.KeyPressMsg{Code: 'q', Text: "q"})
+				_, cmd := update(t, m, tea.KeyPressMsg{Code: 'q', Text: "q"})
 				require.True(t, quits(cmd))
 			},
 		)
 
-		t.Run("Enter doesn't query", func(t *testing.T) {
-			m, asked := withBar(t, size)
-			require.Len(t, *asked, 1)
+		// lastQuery returns the newest query that the mock saw.
+		lastQuery := func(asked *[]logstore.PageQuery) logstore.PageQuery {
+			return (*asked)[len(*asked)-1]
+		}
+
+		// cleared returns m after the keys that delete all the text in the bar.
+		cleared := func(t *testing.T, m Model) Model {
+			t.Helper()
+
+			for range len(m.bar.Value()) {
+				m, _ = update(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
+			}
+
+			require.Empty(t, m.bar.Value())
+
+			return m
+		}
+
+		// apply types text in the bar, which must not have focus, presses
+		// Enter, and runs the query that follows.
+		apply := func(t *testing.T, m Model, text string) Model {
+			t.Helper()
 
 			m, _ = update(t, m, slash)
-			m = typed(t, m, "level:error")
+			m = typed(t, m, text)
+
+			m, cmd := update(t, m, enter)
+			require.NotNil(t, cmd)
+			cmd()
+
+			return m
+		}
+
+		t.Run("Enter filters the table and keeps the view", func(t *testing.T) {
+			m, asked := withBar(t, size)
+			require.Len(t, *asked, 1)
+			require.Nil(t, (*asked)[0].Filter)
+
+			from := &logstore.Key{ID: 5}
+			m.from = from
+
+			m = apply(t, m, "level:error")
+
+			require.Len(t, *asked, 2)
+			require.Equal(
+				t,
+				logstore.PageQuery{
+					From:   from,
+					Limit:  5,
+					Keys:   []string{"_raw"},
+					Filter: logstore.Match{Key: "level", Value: "error"},
+				},
+				lastQuery(asked),
+			)
+			require.Equal(t, focusTable, m.focus)
+			require.False(t, m.bar.Focused())
+			require.Equal(t, 1, m.bar.Height())
+		})
+
+		t.Run("later queries keep the filter", func(t *testing.T) {
+			m, asked := withBar(t, size)
+			m = apply(t, m, "level:error")
+
+			m, cmd := update(t, m, ingest.Ingested{Rows: 1})
+			cmd()
+			require.Equal(
+				t,
+				logstore.Match{Key: "level", Value: "error"},
+				lastQuery(asked).Filter,
+			)
+
+			_, cmd = update(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+			cmd()
+			require.Equal(
+				t,
+				logstore.Match{Key: "level", Value: "error"},
+				lastQuery(asked).Filter,
+			)
+		})
+
+		t.Run("an empty text removes the filter", func(t *testing.T) {
+			m, asked := withBar(t, size)
+			m = apply(t, m, "level:error")
+			require.NotNil(t, lastQuery(asked).Filter)
+
+			m, _ = update(t, m, slash)
+			m = cleared(t, m)
+
+			m, cmd := update(t, m, enter)
+			cmd()
+
+			require.Len(t, *asked, 3)
+			require.Nil(t, lastQuery(asked).Filter)
+			require.Nil(t, m.filter)
+			require.Equal(t, focusTable, m.focus)
+		})
+
+		t.Run("a blank text removes the filter", func(t *testing.T) {
+			m, asked := withBar(t, size)
+			m = apply(t, m, "level:error")
+
+			m, _ = update(t, m, slash)
+			m = cleared(t, m)
+			m = typed(t, m, "  ")
 			_, cmd := update(t, m, enter)
+			cmd()
+
+			require.Nil(t, lastQuery(asked).Filter)
+		})
+
+		t.Run("a text that doesn't parse shows its error and keeps focus",
+			func(t *testing.T) {
+				m, asked := withBar(t, size)
+				m = apply(t, m, "level:error")
+				require.Len(t, *asked, 2)
+
+				m, _ = update(t, m, slash)
+				m = typed(t, m, " level")
+				m, cmd := update(t, m, enter)
+
+				// The error line takes a row from the table.
+				require.NotNil(t, cmd)
+				cmd()
+
+				require.Equal(t, focusFilter, m.focus)
+				require.True(t, m.bar.Focused())
+				require.Equal(t, 2, m.bar.Height())
+				require.Equal(t, "level:error level", m.bar.Value())
+				require.Len(t, *asked, 3)
+				require.Equal(t, 4, lastQuery(asked).Limit)
+
+				// The filter from before stays applied.
+				require.Equal(
+					t,
+					logstore.Match{Key: "level", Value: "error"},
+					lastQuery(asked).Filter,
+				)
+
+				view := ansi.Strip(m.View().Content)
+				require.Contains(t, view, "col 13: ")
+			},
+		)
+
+		t.Run("an error with no filter applied queries without one",
+			func(t *testing.T) {
+				m, asked := withBar(t, size)
+
+				m, _ = update(t, m, slash)
+				m = typed(t, m, "level")
+
+				m, cmd := update(t, m, enter)
+				cmd()
+
+				require.Equal(t, 4, lastQuery(asked).Limit)
+				require.Nil(t, lastQuery(asked).Filter)
+				require.Nil(t, m.filter)
+			},
+		)
+
+		t.Run("the same error again doesn't query", func(t *testing.T) {
+			m, asked := withBar(t, size)
+
+			m, _ = update(t, m, slash)
+			m = typed(t, m, "level")
+
+			m, cmd := update(t, m, enter)
+			cmd()
+
+			m, cmd = update(t, m, enter)
+			require.Nil(t, cmd)
+			require.Len(t, *asked, 2)
+			require.Equal(t, focusFilter, m.focus)
+		})
+
+		t.Run("the next edit clears the error and restores the page",
+			func(t *testing.T) {
+				m, asked := withBar(t, size)
+
+				m, _ = update(t, m, slash)
+				m = typed(t, m, "level")
+				m, cmd := update(t, m, enter)
+				cmd()
+				require.Equal(t, 4, lastQuery(asked).Limit)
+
+				m, cmd = update(t, m, tea.KeyPressMsg{Code: ':', Text: ":"})
+				cmd()
+
+				require.Equal(t, 1, m.bar.Height())
+				require.Equal(t, 5, lastQuery(asked).Limit)
+				require.Equal(t, focusFilter, m.focus)
+			},
+		)
+
+		t.Run("Esc after an error reverts the text and clears the error",
+			func(t *testing.T) {
+				m, asked := withBar(t, size)
+				m = apply(t, m, "level:error")
+
+				m, _ = update(t, m, slash)
+				m = typed(t, m, " level")
+				m, cmd := update(t, m, enter)
+				cmd()
+				require.Equal(t, 4, lastQuery(asked).Limit)
+
+				m, cmd = update(t, m, esc)
+				cmd()
+
+				require.Equal(t, focusTable, m.focus)
+				require.Equal(t, "level:error", m.bar.Value())
+				require.Equal(t, 1, m.bar.Height())
+				require.Equal(t, 5, lastQuery(asked).Limit)
+				require.Equal(
+					t,
+					logstore.Match{Key: "level", Value: "error"},
+					lastQuery(asked).Filter,
+				)
+			},
+		)
+
+		t.Run("Esc leaves the applied filter alone", func(t *testing.T) {
+			m, asked := withBar(t, size)
+			m = apply(t, m, "level:error")
+			n := len(*asked)
+
+			m, _ = update(t, m, slash)
+			m = typed(t, m, " x")
+			m, cmd := update(t, m, esc)
 
 			require.Nil(t, cmd)
-			require.Len(t, *asked, 1)
+			require.Len(t, *asked, n)
+			require.Equal(
+				t,
+				logstore.Match{Key: "level", Value: "error"},
+				m.filter,
+			)
 		})
+
+		t.Run(
+			"drops a page from before the filter changed",
+			func(t *testing.T) {
+				mockRows := tui_mock.NewMockRows(gomock.NewController(t))
+				mockRows.EXPECT().
+					Page(gomock.Any(), gomock.Any()).
+					Return(logstore.Page{Rows: []logstore.Row{{ID: 1, Raw: "all"}}}, nil)
+				mockRows.EXPECT().
+					Page(gomock.Any(), gomock.Any()).
+					Return(logstore.Page{Rows: []logstore.Row{{ID: 2, Raw: "errors"}}}, nil)
+
+				m := New(mockRows, Options{FileSize: 100})
+				m, unfilteredCmd := update(t, m, size)
+				unfiltered := unfilteredCmd()
+
+				m, _ = update(t, m, slash)
+				m = typed(t, m, "level:error")
+				m, filteredCmd := update(t, m, enter)
+
+				// The page of the old query arrives after the filter changed.
+				m, _ = update(t, m, unfiltered)
+				require.Empty(t, m.table.Rows())
+
+				m, _ = update(t, m, filteredCmd())
+				require.Equal(t, "errors", m.table.Rows()[0].Raw)
+			},
+		)
 
 		t.Run("Esc reverts to the committed text", func(t *testing.T) {
 			m, _ := withRows(t, size)
@@ -1097,7 +1349,7 @@ func TestModel(t *testing.T) {
 			m, _ = update(t, m, size)
 			require.Contains(t, m.status(), "· following")
 
-			m, cmd := update(t, m, key(tea.KeyDown))
+			m, cmd := update(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 			require.Equal(t, 1, m.move)
 
 			m, _ = update(t, m, cmd())
@@ -1142,12 +1394,12 @@ func TestModel(t *testing.T) {
 			m := New(mockRows, Options{FileSize: 100})
 			m, _ = update(t, m, size)
 
-			m, first := update(t, m, key(tea.KeyDown))
+			m, first := update(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 			// The first query finishes before the second key press cancels it.
 			stale := first()
 
-			m, second := update(t, m, key(tea.KeyDown))
+			m, second := update(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 			require.Equal(t, 2, m.move)
 
 			fresh := second()
@@ -1225,7 +1477,7 @@ func TestModel(t *testing.T) {
 				mockRows, asked := asks(t, logstore.Page{})
 
 				m := New(mockRows, Options{FileSize: 100})
-				_, cmd := update(t, m, key(tea.KeyDown))
+				_, cmd := update(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 
 				require.Nil(t, cmd)
 				require.Empty(t, *asked)

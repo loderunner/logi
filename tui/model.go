@@ -18,6 +18,7 @@ import (
 	"golang.org/x/text/number"
 
 	"github.com/loderunner/logi/ingest"
+	"github.com/loderunner/logi/kql"
 	"github.com/loderunner/logi/logstore"
 	"github.com/loderunner/logi/tui/detail"
 	"github.com/loderunner/logi/tui/filterbar"
@@ -88,6 +89,11 @@ type Model struct {
 	// says whether it or the table takes the keys.
 	bar   filterbar.Model
 	focus focus
+	// filter is what the bar's text parsed to when Enter last accepted it, or
+	// nil for every row. It stays applied while the bar holds text that is
+	// being edited, or text that doesn't parse. logstore alone turns it into
+	// SQL.
+	filter logstore.Filter
 
 	table table.Model
 	// width is the width of the window. height is the number of lines above
@@ -213,7 +219,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // key routes a key press. Ctrl+C always quits. The bar takes every other key
-// while it has focus, q included, except Enter and Esc, which leave it. The
+// while it has focus, q included, except Enter, which applies its text and
+// leaves the bar unless the text is wrong, and Esc, which leaves it. The
 // detail pane takes every key but Esc and q, and `/` does nothing there. The
 // table has the rest.
 func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -224,11 +231,7 @@ func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.focus == focusFilter {
 		switch msg.String() {
 		case "enter":
-			// The bar commits its text, but nothing filters by it yet.
-			m.bar = m.bar.Commit().Blur()
-			m.focus = focusTable
-
-			return m.layout()
+			return m.applyFilter()
 		case "esc":
 			m.bar = m.bar.Revert().Blur()
 			m.focus = focusTable
@@ -277,6 +280,28 @@ func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// applyFilter parses the bar's text and, when it parses, filters the table by
+// it. An empty text parses to no filter, which shows every row. When it
+// doesn't parse, the bar shows the error under itself, keeps focus and its
+// text, and the filter that was applied stays.
+func (m Model) applyFilter() (Model, tea.Cmd) {
+	filter, err := kql.Parse(m.bar.Value())
+	if err != nil {
+		m.bar = m.bar.SetError(err.Error())
+
+		return m.layout()
+	}
+
+	m.filter = filter
+	m.bar = m.bar.Commit().Blur()
+	m.focus = focusTable
+
+	// The page is loaded again whatever the heights are, because the rows
+	// have changed. It starts from the same top row, so the view stays where
+	// it was.
+	return m.resize().refresh()
 }
 
 // updateBar sends msg to the bar and makes room for the error line that it
@@ -359,7 +384,8 @@ func (m Model) scroll(n int) (Model, tea.Cmd) {
 
 // refresh cancels the in-flight page query and starts a new one. The query
 // starts from the top row of the last page that arrived, and asks for all the
-// scrolling since then.
+// scrolling since then. It applies the current filter, and the generation
+// number drops the pages of any query that used an earlier one.
 func (m Model) refresh() (Model, tea.Cmd) {
 	if m.cancel != nil {
 		m.cancel()
@@ -382,6 +408,8 @@ func (m Model) refresh() (Model, tea.Cmd) {
 		Move:  m.move,
 		Limit: m.tableHeight(),
 		Keys:  keys,
+		// A filter is immutable, so the Cmd can share it.
+		Filter: m.filter,
 	}
 
 	return m, queryPage(ctx, m.source, q, m.gen)
