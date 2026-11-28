@@ -4,9 +4,6 @@
 package tui
 
 import (
-	"context"
-	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -32,13 +29,6 @@ const (
 	rateWindow = time.Second
 )
 
-// Rows is where the TUI gets rows to show. *logstore.Store satisfies it.
-type Rows interface {
-	// Page returns a page of rows, newest first, each with the value of every
-	// key in the query.
-	Page(ctx context.Context, q logstore.PageQuery) (logstore.Page, error)
-}
-
 // Options describes the input, for the status bar.
 type Options struct {
 	// Stdin is true when the input is a stream of unknown length.
@@ -52,12 +42,6 @@ type Options struct {
 // when reading the input or ingesting it fails.
 type ErrMsg struct {
 	Err error
-}
-
-// pageMsg carries the result of a page query.
-type pageMsg struct {
-	gen  int
-	page logstore.Page
 }
 
 // tickMsg fires every rateTick, to recompute the rows/s figure.
@@ -79,56 +63,29 @@ const (
 	focusFilter
 )
 
-// Model is the root bubbletea model: the filter bar, the table, the detail
-// pane, the status bar and the page queries that fill the table.
+// Model is the root bubbletea model. It lays out the filter bar, the table,
+// the detail pane and the status bar, decides which of them takes the keys,
+// and passes what one pane produces, such as a filter or a row to show, to
+// another.
 type Model struct {
-	source Rows
-	opts   Options
+	opts Options
 
 	// bar is the top line, with its error line under it when it has one. focus
 	// says whether it or the table takes the keys.
 	bar   filterbar.Model
 	focus focus
-	// filter is what the bar's text parsed to when Enter last accepted it, or
-	// nil for every row. It stays applied while the bar holds text that is
-	// being edited, or text that doesn't parse. logstore alone turns it into
-	// SQL.
-	filter logstore.Filter
 
 	table table.Model
 	// width is the width of the window. height is the number of lines above
 	// the status bar, which the bar and the table share, as the table takes
-	// what the bar leaves. paneHeight is the height that layout last gave the
-	// table and the detail pane.
+	// what the bar leaves.
 	width, height int
-	paneHeight    int
 
 	// detail holds its own copy of the row it shows, so the table can keep
 	// loading pages while the pane is open. showDetail is true while the pane
 	// takes the table's place.
 	detail     detail.Model
 	showDetail bool
-
-	// known lists every key seen so far, in order of appearance. timeKey is
-	// the one the timestamp came from, or "" until ingest has found it. keys
-	// are the table's columns after the timestamp, as defaultKeys picks them.
-	known   []string
-	timeKey string
-	keys    []string
-
-	// from is the key of the top row on screen, or nil while the table
-	// follows the newest row. It comes from the last page and is never
-	// changed in place, so copies of the model share it.
-	from *logstore.Key
-	// move is the number of rows the keys have asked to scroll since the last
-	// page arrived: positive is older, negative is newer. Each query repeats
-	// it, so a query that a newer one replaces loses no key press.
-	move int
-
-	// gen numbers page queries. cancel stops the one in flight. A result
-	// with an older gen is dropped.
-	gen    int
-	cancel context.CancelFunc
 
 	// rows, bytes and eof are the progress that ingest last reported.
 	// samples and rate are the rows/s figure and the history it comes from.
@@ -143,14 +100,12 @@ type Model struct {
 }
 
 // New returns a Model that shows the rows of source.
-func New(source Rows, opts Options) Model {
+func New(source table.Rows, opts Options) Model {
 	return Model{
-		source:  source,
 		opts:    opts,
 		bar:     filterbar.New(),
-		table:   table.New(),
+		table:   table.New(source),
 		detail:  detail.New(),
-		keys:    defaultKeys(nil, ""),
 		samples: []sample{{at: time.Now()}},
 	}
 }
@@ -175,27 +130,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = max(msg.Height-1, 0) // the status bar takes a line
 		m.bar = m.bar.SetWidth(m.width)
-		m = m.resize()
 
-		return m.refresh()
+		return m.layout()
 
 	case ingest.Ingested:
 		m.rows = msg.Rows
 		m.bytes = msg.Bytes
 		m.eof = msg.EOF
 		m.samples = append(m.samples, sample{at: time.Now(), rows: msg.Rows})
-		m = m.setColumns(msg.NewKeys, msg.TimeKey)
 
-		return m.refresh()
+		return m.updateTable(msg)
 
-	case pageMsg:
-		if msg.gen != m.gen {
-			return m, nil
-		}
+	case table.PageMsg:
+		return m.updateTable(msg)
 
-		m.from = msg.page.From
-		m.move = 0
-		m.table = m.table.SetRows(msg.page.Rows)
+	case table.OpenMsg:
+		return m.openDetail(msg.Row), nil
 
 	case tickMsg:
 		m = m.updateRate(time.Time(msg))
@@ -205,17 +155,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			func(t time.Time) tea.Msg { return tickMsg(t) },
 		)
 
-	case ErrMsg:
-		m.err = msg.Err
+	case table.ErrMsg:
+		return m.fail(msg.Err)
 
-		return m.quit()
+	case ErrMsg:
+		return m.fail(msg.Err)
 
 	default:
 		// What the bar sends itself, such as a paste, comes back here.
 		return m.updateBar(msg)
 	}
-
-	return m, nil
 }
 
 // key routes a key press. Ctrl+C always quits. The bar takes every other key
@@ -267,19 +216,9 @@ func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, cmd
 	case "q":
 		return m.quit()
-	case "enter":
-		return m.openDetail(), nil
-	case "up":
-		return m.scroll(-1)
-	case "down":
-		return m.scroll(1)
-	case "pgup":
-		return m.scroll(-m.tableHeight())
-	case "pgdown":
-		return m.scroll(m.tableHeight())
 	}
 
-	return m, nil
+	return m.updateTable(msg)
 }
 
 // applyFilter parses the bar's text and, when it parses, filters the table by
@@ -294,14 +233,16 @@ func (m Model) applyFilter() (Model, tea.Cmd) {
 		return m.layout()
 	}
 
-	m.filter = filter
 	m.bar = m.bar.Commit().Blur()
 	m.focus = focusTable
 
-	// The page is loaded again whatever the heights are, because the rows
-	// have changed. It starts from the same top row, so the view stays where
-	// it was.
-	return m.resize().refresh()
+	// The table loads its page again, from the same top row, so the view
+	// stays where it was.
+	var cmd tea.Cmd
+
+	m.table, cmd = m.table.SetFilter(filter)
+
+	return m, cmd
 }
 
 // updateBar sends msg to the bar and makes room for the error line that it
@@ -316,41 +257,34 @@ func (m Model) updateBar(msg tea.Msg) (Model, tea.Cmd) {
 	return m, tea.Batch(barCmd, layoutCmd)
 }
 
-// tableHeight is the number of lines that the bar leaves for the table.
-func (m Model) tableHeight() int {
+// updateTable sends msg to the table.
+func (m Model) updateTable(msg tea.Msg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+
+	m.table, cmd = m.table.Update(msg)
+
+	return m, cmd
+}
+
+// paneHeight is the number of lines that the bar leaves for the table and the
+// detail pane.
+func (m Model) paneHeight() int {
 	return max(m.height-m.bar.Height(), 0)
 }
 
-// resize gives the table and the detail pane the height that the bar leaves.
-func (m Model) resize() Model {
-	m.paneHeight = m.tableHeight()
-	m.table = m.table.SetSize(m.width, m.paneHeight)
-	m.detail = m.detail.SetSize(m.width, m.paneHeight)
-
-	return m
-}
-
-// layout makes the table and the detail pane fit the lines the bar leaves,
-// after the bar changed. When their height changes, it also loads the rows
-// again, because the page holds as many rows as the table shows.
+// layout gives the table and the detail pane the lines the bar leaves. The
+// table loads its page again when its height changes.
 func (m Model) layout() (Model, tea.Cmd) {
-	if m.tableHeight() == m.paneHeight {
-		return m, nil
-	}
+	var cmd tea.Cmd
 
-	m = m.resize()
+	m.table, cmd = m.table.SetSize(m.width, m.paneHeight())
+	m.detail = m.detail.SetSize(m.width, m.paneHeight())
 
-	return m.refresh()
+	return m, cmd
 }
 
-// openDetail opens the detail pane on the selected row. An empty table has
-// none, so nothing opens.
-func (m Model) openDetail() Model {
-	row, ok := m.table.Selected()
-	if !ok {
-		return m
-	}
-
+// openDetail opens the detail pane on row.
+func (m Model) openDetail(row logstore.Row) Model {
 	m.detail = m.detail.Open("Detail: "+table.FormatTime(row.TS), row.Raw)
 	m.showDetail = true
 
@@ -365,99 +299,18 @@ func (m Model) closeDetail() Model {
 	return m
 }
 
-// quit stops the in-flight query and ends the program.
+// fail records err as the failure that ended the program, and ends it.
+func (m Model) fail(err error) (Model, tea.Cmd) {
+	m.err = err
+
+	return m.quit()
+}
+
+// quit stops the table's query in flight and ends the program.
 func (m Model) quit() (Model, tea.Cmd) {
-	if m.cancel != nil {
-		m.cancel()
-	}
+	m.table.Stop()
 
 	return m, tea.Quit
-}
-
-// scroll asks to move the view by n rows, positive for older rows, and
-// refreshes the page.
-func (m Model) scroll(n int) (Model, tea.Cmd) {
-	m.move += n
-
-	return m.refresh()
-}
-
-// refresh cancels the in-flight page query and starts a new one. The query
-// starts from the top row of the last page that arrived, and asks for all the
-// scrolling since then. It applies the current filter, and the generation
-// number drops the pages of any query that used an earlier one.
-func (m Model) refresh() (Model, tea.Cmd) {
-	if m.cancel != nil {
-		m.cancel()
-		m.cancel = nil
-	}
-
-	if m.tableHeight() <= 0 {
-		return m, nil
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
-	m.gen++
-
-	// The Cmd runs after Update returns, and m.keys may change by then.
-	keys := slices.Clone(m.keys)
-
-	q := logstore.PageQuery{
-		From:  m.from,
-		Move:  m.move,
-		Limit: m.tableHeight(),
-		Keys:  keys,
-		// A filter is immutable, so the Cmd can share it.
-		Filter: m.filter,
-	}
-
-	return m, queryPage(ctx, m.source, q, m.gen)
-}
-
-// setColumns records newly seen keys and the time key and, when they change
-// the default columns, switches the table to them. The refresh that follows
-// loads rows for the new keys, and its generation number drops results for
-// the old ones.
-func (m Model) setColumns(newKeys []string, timeKey string) Model {
-	m.known = append(m.known, newKeys...)
-	m.timeKey = timeKey
-
-	keys := defaultKeys(m.known, m.timeKey)
-	if slices.Equal(keys, m.keys) {
-		return m
-	}
-
-	m.keys = keys
-	m.table = m.table.
-		SetMessageColumn(messageIndex(keys)).
-		SetLevelColumn(levelIndex(keys)).
-		ResetWidths()
-
-	return m
-}
-
-// queryPage loads the page q asks for. It reports a failure as an ErrMsg,
-// except when ctx was canceled, which means a newer query replaced it or the
-// program is quitting. The driver may not wrap context.Canceled, so the check
-// is on ctx, not on the error.
-func queryPage(
-	ctx context.Context,
-	source Rows,
-	q logstore.PageQuery,
-	gen int,
-) tea.Cmd {
-	return func() tea.Msg {
-		page, err := source.Page(ctx, q)
-		if ctx.Err() != nil {
-			return nil
-		}
-		if err != nil {
-			return ErrMsg{Err: fmt.Errorf("load rows: %w", err)}
-		}
-
-		return pageMsg{gen: gen, page: page}
-	}
 }
 
 // updateRate sets the rows per second ingested over the last rateWindow
@@ -492,7 +345,7 @@ func (m Model) View() tea.View {
 
 	v.AltScreen = true
 
-	if m.width <= 0 || m.tableHeight() <= 0 {
+	if m.width <= 0 || m.paneHeight() <= 0 {
 		return v
 	}
 
@@ -536,7 +389,7 @@ var printer = message.NewPrinter(language.English)
 // follow returns the status bar's word for whether the view follows the newest
 // row or stays where it was scrolled.
 func (m Model) follow() string {
-	if m.from == nil {
+	if m.table.Following() {
 		return "following"
 	}
 

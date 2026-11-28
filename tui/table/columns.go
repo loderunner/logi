@@ -1,4 +1,4 @@
-package tui
+package table
 
 import (
 	"slices"
@@ -49,22 +49,22 @@ func defaultKeys(known []string, timeKey string) []string {
 	return keys
 }
 
-// messageIndex returns the index in keys of the message key, or -1.
+// messageIndex returns the index in keys of the message key, or noColumn.
 func messageIndex(keys []string) int {
 	return keyIndex(keys, messageKeys)
 }
 
-// levelIndex returns the index in keys of the level key, or -1.
+// levelIndex returns the index in keys of the level key, or noColumn.
 func levelIndex(keys []string) int {
 	return keyIndex(keys, levelKeys)
 }
 
 // keyIndex returns the index in keys of the key that matches the earliest
-// candidate, or -1.
+// candidate, or noColumn.
 func keyIndex(keys, candidates []string) int {
 	key, ok := findKey(keys, candidates)
 	if !ok {
-		return -1
+		return noColumn
 	}
 
 	return slices.Index(keys, key)
