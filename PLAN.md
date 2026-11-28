@@ -160,7 +160,8 @@ the same ingest path for both:
   window, histogram, counts) runs as a `tea.Cmd` on its own connection from
   the pool. Starting a new query cancels the previous one of the same kind
   through its context, and late results are dropped by generation number.
-  The histogram is refreshed at most twice per second while ingest runs.
+  Each pane runs the queries for what it shows, and the root model routes
+  their results back to it. The histogram is refreshed at most twice per second while ingest runs.
 - The table only queries the rows on screen, with keyset pagination on
   `(ts, id)`.
 
@@ -375,8 +376,8 @@ the same ingest path for both:
 | `ingest/` | Reading and following input, parsing and flattening lines, timestamp detection, batching. |
 | `logstore/` | The DuckDB lifecycle (memory limit, temp directory), schema, the Appender, and the window, count and histogram queries. It also turns filters into SQL. The only package that writes SQL. |
 | `kql/` | Filter parser, parsing straight into a `logstore.Filter`, with no separate AST. |
-| `tui/` | Root model: layout, focus, key map, status bar. |
-| `tui/table/`, `tui/histogram/`, `tui/filterbar/`, `tui/picker/`, `tui/detail/` | One package per pane. |
+| `tui/` | Root model: layout, focus, the keys no pane handles, what one pane passes to another (such as the filter), status bar. |
+| `tui/table/`, `tui/histogram/`, `tui/filterbar/`, `tui/picker/`, `tui/detail/` | One package per pane, with its own keys and queries. The table holds its page query, its scroll position and its default columns. |
 | `cmd/genlogs/` | Synthetic log generator: streams like `tail -f` by default, writes a sized batch with `-size-mb`. For manual runs. |
 
 ## Deliverables

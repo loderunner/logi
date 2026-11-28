@@ -1,14 +1,19 @@
-// Package table renders log rows as a table: a timestamp column, then one
-// column per key.
+// Package table is the table pane. It loads the rows on screen, newest first,
+// and renders them as a table: a timestamp column, then one column per key.
 package table
 
 import (
+	"context"
+	"slices"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/loderunner/logi/ingest"
 	"github.com/loderunner/logi/logstore"
 	"github.com/loderunner/logi/tui/termtext"
 )
@@ -30,89 +35,206 @@ const (
 // selectedStyle draws the selected row.
 var selectedStyle = lipgloss.NewStyle().Reverse(true)
 
-// Model is the table pane. It holds the rows to show, newest first, and the
-// size of the pane. The top row is the selected row, in reverse video.
+// Model is the table pane. It loads the page of rows it shows, newest first,
+// from its source, and queries again when ingest reports new rows, when it
+// scrolls, and when its height, its columns or its filter change. The top row
+// is the selected row, in reverse video.
 //
-// A row's Values are its cells after the timestamp. When all of them are
-// empty, the row shows its Raw line across those columns instead, which
-// covers lines that aren't JSON and lines without the keys being shown.
+// A row's Values are its cells after the timestamp, one per column. When all
+// of them are empty, the row shows its Raw line across those columns instead,
+// which covers lines that aren't JSON and lines without the keys being shown.
 type Model struct {
+	source Rows
+	keyMap keyMap
+
 	rows          []logstore.Row
 	width, height int
 
+	// known lists every key seen so far, in order of appearance. timeKey is
+	// the one the timestamp came from, or "" until ingest has found it.
+	// columns are the keys after the timestamp, as defaultKeys picks them.
+	known   []string
+	timeKey string
+	columns []string
+
+	// filter is the filter of every query, or nil for every row.
+	filter logstore.Filter
+
 	// widths[i] is the widest cell shown so far in column i. It only grows
-	// until ResetWidths, so a column doesn't jump when a short value follows a
-	// long one.
+	// until the columns change, so a column doesn't jump when a short value
+	// follows a long one.
 	widths []int
 
 	// message and level are the indexes of the message and level columns, or
 	// noColumn.
 	message, level int
+
+	// from is the key of the top row on screen, or nil while the table
+	// follows the newest row. It comes from the last page and is never
+	// changed in place, so copies of the model share it.
+	from *logstore.Key
+	// move is the number of rows the keys have asked to scroll since the last
+	// page arrived: positive is older, negative is newer. Each query repeats
+	// it, so a query that a newer one replaces loses no key press.
+	move int
+
+	// gen numbers page queries. cancel stops the one in flight. A page with
+	// an older gen is dropped.
+	gen    int
+	cancel context.CancelFunc
 }
 
 // noColumn is the index of a column the table doesn't have.
 const noColumn = -1
 
-// New returns an empty table.
-func New() Model {
-	return Model{message: noColumn, level: noColumn}
+// keyMap is the keys the table handles.
+type keyMap struct {
+	Up, Down, PageUp, PageDown key.Binding
+	// Open asks to open the selected row in the detail pane.
+	Open key.Binding
 }
 
-// SetMessageColumn returns the table treating column i as the message column,
-// which can take more than 1/maxColumnShare of the pane, down to
-// minMessageCap cells. Pass a negative i for none.
-func (m Model) SetMessageColumn(i int) Model {
-	if i < 0 {
-		i = noColumn
+// OpenMsg asks the parent to show Row in the detail pane.
+type OpenMsg struct {
+	Row logstore.Row
+}
+
+// New returns an empty table that loads its pages from source. It shows the
+// raw line as its only column until ingest reports keys.
+func New(source Rows) Model {
+	columns := defaultKeys(nil, "")
+
+	return Model{
+		source: source,
+		keyMap: keyMap{
+			Up:       key.NewBinding(key.WithKeys("up")),
+			Down:     key.NewBinding(key.WithKeys("down")),
+			PageUp:   key.NewBinding(key.WithKeys("pgup")),
+			PageDown: key.NewBinding(key.WithKeys("pgdown")),
+			Open:     key.NewBinding(key.WithKeys("enter")),
+		},
+		columns: columns,
+		message: messageIndex(columns),
+		level:   levelIndex(columns),
 	}
-
-	m.message = i
-
-	return m
 }
 
-// SetLevelColumn returns the table coloring the values of column i by log
-// level. Pass a negative i for none.
-func (m Model) SetLevelColumn(i int) Model {
-	if i < 0 {
-		i = noColumn
-	}
-
-	m.level = i
-
-	return m
-}
-
-// SetSize returns the table resized to width columns and height lines.
-func (m Model) SetSize(width, height int) Model {
+// SetSize returns the table resized to width columns and height lines. A page
+// holds as many rows as the table shows, so a new height loads the page again,
+// from the same top row.
+func (m Model) SetSize(width, height int) (Model, tea.Cmd) {
+	resized := height != m.height
 	m.width = width
 	m.height = height
 
-	return m
+	if !resized {
+		return m, nil
+	}
+
+	return m.refresh()
 }
 
-// SetRows returns the table showing rows, which it keeps without copying.
-// The caller must not change the slice afterwards. Every row must have the
-// same number of Values.
-func (m Model) SetRows(rows []logstore.Row) Model {
-	m.rows = rows
-	m.widths = m.grownWidths(rows)
+// SetFilter returns the table filtered by f, or showing every row when f is
+// nil, and the query that loads the page again from the same top row.
+func (m Model) SetFilter(f logstore.Filter) (Model, tea.Cmd) {
+	m.filter = f
 
-	return m
+	return m.refresh()
 }
 
-// ResetWidths returns the table with its column widths forgotten, sized again
-// to the rows it holds. Call it when the columns change.
-func (m Model) ResetWidths() Model {
+// Following reports whether the table follows the newest row, which it does
+// until it scrolls away from it.
+func (m Model) Following() bool {
+	return m.from == nil
+}
+
+// Update handles the keys that scroll the table and open the selected row,
+// the progress reports of ingest, which bring new rows and keys, and the
+// pages of its own queries.
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		return m.key(msg)
+
+	case ingest.Ingested:
+		m = m.setKnown(msg.NewKeys, msg.TimeKey)
+
+		return m.refresh()
+
+	case PageMsg:
+		if msg.gen != m.gen {
+			return m, nil
+		}
+
+		m.from = msg.page.From
+		m.move = 0
+		m = m.setRows(msg.page.Rows)
+	}
+
+	return m, nil
+}
+
+// key handles a key press. Enter on an empty table opens nothing.
+func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keyMap.Up):
+		return m.scroll(-1)
+	case key.Matches(msg, m.keyMap.Down):
+		return m.scroll(1)
+	case key.Matches(msg, m.keyMap.PageUp):
+		return m.scroll(-m.height)
+	case key.Matches(msg, m.keyMap.PageDown):
+		return m.scroll(m.height)
+	case key.Matches(msg, m.keyMap.Open):
+		if len(m.rows) == 0 {
+			return m, nil
+		}
+
+		row := m.rows[0]
+
+		return m, func() tea.Msg { return OpenMsg{Row: row} }
+	}
+
+	return m, nil
+}
+
+// scroll asks to move the view by n rows, positive for older rows, and loads
+// the page again.
+func (m Model) scroll(n int) (Model, tea.Cmd) {
+	m.move += n
+
+	return m.refresh()
+}
+
+// setKnown records newly seen keys and the time key and, when they change the
+// default columns, switches to them and forgets the column widths. The query
+// that follows loads the rows for the new columns, and its generation number
+// drops the pages of the old ones.
+func (m Model) setKnown(newKeys []string, timeKey string) Model {
+	m.known = append(m.known, newKeys...)
+	m.timeKey = timeKey
+
+	columns := defaultKeys(m.known, m.timeKey)
+	if slices.Equal(columns, m.columns) {
+		return m
+	}
+
+	m.columns = columns
+	m.message = messageIndex(columns)
+	m.level = levelIndex(columns)
 	m.widths = nil
 	m.widths = m.grownWidths(m.rows)
 
 	return m
 }
 
-// Rows returns the rows the table shows.
-func (m Model) Rows() []logstore.Row {
-	return m.rows
+// setRows returns the table showing rows, which it keeps without copying.
+// Every row must have one Value per column.
+func (m Model) setRows(rows []logstore.Row) Model {
+	m.rows = rows
+	m.widths = m.grownWidths(rows)
+
+	return m
 }
 
 // grownWidths returns the column widths widened to fit rows. It returns a
@@ -154,16 +276,6 @@ func showsRaw(row logstore.Row) bool {
 	}
 
 	return true
-}
-
-// Selected returns the selected row, which is the top one, and false when the
-// table is empty.
-func (m Model) Selected() (logstore.Row, bool) {
-	if len(m.rows) == 0 {
-		return logstore.Row{}, false
-	}
-
-	return m.rows[0], true
 }
 
 // View renders one line per row, cut to the width, then blank lines up to the
