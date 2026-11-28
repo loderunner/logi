@@ -196,6 +196,14 @@ func TestModel(t *testing.T) {
 			})
 		}
 
+		t.Run("Esc asks to close the pane", func(t *testing.T) {
+			m, cmd := middle().Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+
+			require.NotNil(t, cmd)
+			require.Equal(t, CloseMsg{}, cmd())
+			require.Equal(t, middle().View(), m.View())
+		})
+
 		t.Run("ignores other keys", func(t *testing.T) {
 			m, cmd := middle().Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
 

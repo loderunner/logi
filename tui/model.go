@@ -147,6 +147,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case table.OpenMsg:
 		return m.openDetail(msg.Row), nil
 
+	case detail.CloseMsg:
+		m.showDetail = false
+
+		return m, nil
+
 	case tickMsg:
 		m = m.updateRate(time.Time(msg))
 
@@ -170,8 +175,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // key routes a key press. Ctrl+C always quits. The bar takes every other key
 // while it has focus, q included, except Enter, which applies its text and
 // leaves the bar unless the text is wrong, and Esc, which leaves it. The
-// detail pane takes every key but Esc and q, and `/` does nothing there. The
-// table has the rest.
+// detail pane takes every key but q, and `/` does nothing there. The table has
+// the rest.
 func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
 		return m.quit()
@@ -193,10 +198,7 @@ func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	// While the detail pane covers the table, it gets every other key.
 	if m.showDetail {
-		switch msg.String() {
-		case "esc":
-			return m.closeDetail(), nil
-		case "q":
+		if msg.String() == "q" {
 			return m.quit()
 		}
 
@@ -287,14 +289,6 @@ func (m Model) layout() (Model, tea.Cmd) {
 func (m Model) openDetail(row logstore.Row) Model {
 	m.detail = m.detail.Open("Detail: "+table.FormatTime(row.TS), row.Raw)
 	m.showDetail = true
-
-	return m
-}
-
-// closeDetail closes the detail pane and brings back the table. It does
-// nothing when the pane is closed.
-func (m Model) closeDetail() Model {
-	m.showDetail = false
 
 	return m
 }
