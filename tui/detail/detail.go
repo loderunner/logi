@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -15,8 +16,10 @@ const indent = "  "
 
 // Model is the detail pane. It holds the lines of one row, the title of its
 // frame and the size of the pane. A setter returns a changed copy, and Update
-// handles the keys that scroll it.
+// handles the keys that scroll and close it.
 type Model struct {
+	keyMap keyMap
+
 	title string
 	// text is the row's lines before wrapping. lines is text wrapped to the
 	// width inside the frame, so the pane shows a value whole instead of
@@ -28,9 +31,27 @@ type Model struct {
 	offset int
 }
 
+// keyMap is the keys the pane handles.
+type keyMap struct {
+	Up, Down, PageUp, PageDown key.Binding
+	// Close asks to close the pane.
+	Close key.Binding
+}
+
+// CloseMsg asks the parent to close the pane.
+type CloseMsg struct{}
+
 // New returns an empty pane.
 func New() Model {
-	return Model{}
+	return Model{
+		keyMap: keyMap{
+			Up:       key.NewBinding(key.WithKeys("up")),
+			Down:     key.NewBinding(key.WithKeys("down")),
+			PageUp:   key.NewBinding(key.WithKeys("pgup")),
+			PageDown: key.NewBinding(key.WithKeys("pgdown")),
+			Close:    key.NewBinding(key.WithKeys("esc")),
+		},
+	}
 }
 
 // SetSize returns the pane resized to width columns and height lines, with
@@ -44,24 +65,25 @@ func (m Model) SetSize(width, height int) Model {
 	return m
 }
 
-// Update handles the keys that scroll the pane: the arrows by a line, and the
-// page keys by the height of the text. Scrolling runs no query, so it returns no
-// command.
+// Update handles the keys that scroll the pane, the arrows by a line and the
+// page keys by the height of the text, and Esc, which yields a CloseMsg.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
-	key, ok := msg.(tea.KeyPressMsg)
+	press, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
 
-	switch key.String() {
-	case "up":
+	switch {
+	case key.Matches(press, m.keyMap.Up):
 		m = m.scroll(-1)
-	case "down":
+	case key.Matches(press, m.keyMap.Down):
 		m = m.scroll(1)
-	case "pgup":
+	case key.Matches(press, m.keyMap.PageUp):
 		m = m.scroll(-m.textHeight())
-	case "pgdown":
+	case key.Matches(press, m.keyMap.PageDown):
 		m = m.scroll(m.textHeight())
+	case key.Matches(press, m.keyMap.Close):
+		return m, func() tea.Msg { return CloseMsg{} }
 	}
 
 	return m, nil
