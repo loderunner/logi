@@ -3,6 +3,7 @@
 package filterbar
 
 import (
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -20,17 +21,36 @@ const (
 
 // Model is the filter bar. It holds the text being edited, the text at the
 // last Commit, and the message of the error under the bar, if any. A setter
-// returns a changed copy, and Update handles the keys that edit the text.
+// returns a changed copy, and Update handles the keys that edit, submit and
+// cancel the text.
 type Model struct {
-	input textinput.Model
+	keyMap keyMap
+	input  textinput.Model
 	// width is the width of the whole bar. The input's own width counts the
 	// text only.
 	width int
-	// committed is the text at the last Commit, which Revert restores.
+	// committed is the text at the last Commit, which Esc restores.
 	committed string
 	// err is the message under the bar, or "" when there is none.
 	err string
 }
+
+// keyMap is the keys the bar handles on top of the input's own.
+type keyMap struct {
+	// Submit asks to apply the text, and Cancel to leave it.
+	Submit, Cancel key.Binding
+}
+
+// SubmitMsg asks the parent to apply Text, the bar's text when Enter was
+// pressed. The parent calls Commit when it accepts it, or SetError when it
+// doesn't.
+type SubmitMsg struct {
+	Text string
+}
+
+// CancelMsg tells the parent that Esc reverted the bar to its committed text,
+// and asks it to move the focus away.
+type CancelMsg struct{}
 
 // New returns an empty bar that doesn't have focus.
 func New() Model {
@@ -54,7 +74,13 @@ func New() Model {
 	styles.Blurred.Placeholder = faint
 	input.SetStyles(styles)
 
-	return Model{input: input}
+	return Model{
+		keyMap: keyMap{
+			Submit: key.NewBinding(key.WithKeys("enter")),
+			Cancel: key.NewBinding(key.WithKeys("esc")),
+		},
+		input: input,
+	}
 }
 
 // SetWidth returns the bar resized to w columns.
@@ -83,26 +109,21 @@ func (m Model) Blur() Model {
 	return m
 }
 
-// Focused reports whether the bar has focus, which means it takes the keys.
-func (m Model) Focused() bool {
-	return m.input.Focused()
-}
-
 // Value returns the text in the bar.
 func (m Model) Value() string {
 	return m.input.Value()
 }
 
-// Commit returns the bar with its text recorded as the one Revert restores.
+// Commit returns the bar with its text recorded as the one that Esc restores.
 func (m Model) Commit() Model {
 	m.committed = m.input.Value()
 
 	return m
 }
 
-// Revert returns the bar with the text of the last Commit, or empty before
+// revert returns the bar with the text of the last Commit, or empty before
 // the first, and no error.
-func (m Model) Revert() Model {
+func (m Model) revert() Model {
 	m.input.SetValue(m.committed)
 	m.input.CursorEnd()
 	m.err = ""
@@ -129,8 +150,23 @@ func (m Model) Height() int {
 
 // Update handles the keys that edit the text and move the cursor, and the
 // messages that the input sends itself. A change to the text clears the error.
+// Enter yields a SubmitMsg, and Esc reverts the text and yields a CancelMsg.
 // The bar ignores every message while it doesn't have focus.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	if !m.input.Focused() {
+		return m, nil
+	}
+
+	press, ok := msg.(tea.KeyPressMsg)
+	switch {
+	case ok && key.Matches(press, m.keyMap.Submit):
+		text := m.input.Value()
+
+		return m, func() tea.Msg { return SubmitMsg{Text: text} }
+	case ok && key.Matches(press, m.keyMap.Cancel):
+		return m.revert(), func() tea.Msg { return CancelMsg{} }
+	}
+
 	before := m.input.Value()
 
 	var cmd tea.Cmd

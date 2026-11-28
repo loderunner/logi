@@ -611,6 +611,22 @@ func TestModel(t *testing.T) {
 			require.Equal(t, 1, m.bar.Height())
 		})
 
+		t.Run("a key typed before the submit arrives drops it",
+			func(t *testing.T) {
+				m, asked := withBar(t, size)
+				m, _ = send(t, m, slash)
+				m = typed(t, m, "level:error")
+
+				m, submit := update(t, m, enter)
+				m = typed(t, m, "x")
+				m, _ = run(t, m, submit)
+
+				require.Len(t, *asked, 1)
+				require.Equal(t, focusFilter, m.focus)
+				require.Equal(t, "level:errorx", m.bar.Value())
+			},
+		)
+
 		t.Run("an empty text removes the filter", func(t *testing.T) {
 			m, asked := withBar(t, size)
 			m = apply(t, m, "level:error")

@@ -33,6 +33,9 @@ func focused(t *testing.T) Model {
 }
 
 func TestModel(t *testing.T) {
+	enter := tea.KeyPressMsg{Code: tea.KeyEnter}
+	esc := tea.KeyPressMsg{Code: tea.KeyEscape}
+
 	t.Run("View", func(t *testing.T) {
 		t.Run(
 			"shows the prompt and a placeholder while empty",
@@ -110,11 +113,11 @@ func TestModel(t *testing.T) {
 
 	t.Run("Focus and Blur", func(t *testing.T) {
 		m := New()
-		require.False(t, m.Focused())
+		require.False(t, m.input.Focused())
 
 		m, _ = m.Focus()
-		require.True(t, m.Focused())
-		require.False(t, m.Blur().Focused())
+		require.True(t, m.input.Focused())
+		require.False(t, m.Blur().input.Focused())
 	})
 
 	t.Run("Cursor", func(t *testing.T) {
@@ -176,22 +179,44 @@ func TestModel(t *testing.T) {
 		})
 	})
 
-	t.Run("Commit and Revert", func(t *testing.T) {
-		t.Run("Revert restores the committed text", func(t *testing.T) {
+	t.Run("Enter", func(t *testing.T) {
+		t.Run("asks to apply the text", func(t *testing.T) {
+			m := typed(t, focused(t), "level:error")
+
+			next, cmd := m.Update(enter)
+			require.NotNil(t, cmd)
+			require.Equal(t, SubmitMsg{Text: "level:error"}, cmd())
+
+			// The bar keeps its text and focus until the parent decides.
+			require.Equal(t, "level:error", next.Value())
+			require.NotNil(t, next.Cursor())
+		})
+
+		t.Run("does nothing without focus", func(t *testing.T) {
+			_, cmd := New().Update(enter)
+
+			require.Nil(t, cmd)
+		})
+	})
+
+	t.Run("Commit and Esc", func(t *testing.T) {
+		t.Run("Esc restores the committed text", func(t *testing.T) {
 			m := typed(t, focused(t), "level:error").Commit()
 			m = typed(t, m, " x")
 			require.Equal(t, "level:error x", m.Value())
 
-			m = m.Revert()
+			m, cmd := m.Update(esc)
 			require.Equal(t, "level:error", m.Value())
+			require.NotNil(t, cmd)
+			require.Equal(t, CancelMsg{}, cmd())
 
 			// The cursor is at the end, so typing goes on from there.
 			m = typed(t, m, "!")
 			require.Equal(t, "level:error!", m.Value())
 		})
 
-		t.Run("Revert before a Commit empties the bar", func(t *testing.T) {
-			m := typed(t, focused(t), "abc").Revert()
+		t.Run("Esc before a Commit empties the bar", func(t *testing.T) {
+			m, _ := typed(t, focused(t), "abc").Update(esc)
 
 			require.Empty(t, m.Value())
 		})
@@ -202,10 +227,16 @@ func TestModel(t *testing.T) {
 			require.Equal(t, "abc", m.Value())
 		})
 
-		t.Run("Revert clears the error", func(t *testing.T) {
-			m := typed(t, focused(t), "abc").SetError("bad").Revert()
+		t.Run("Esc clears the error", func(t *testing.T) {
+			m, _ := typed(t, focused(t), "abc").SetError("bad").Update(esc)
 
 			require.Equal(t, 1, m.Height())
+		})
+
+		t.Run("Esc does nothing without focus", func(t *testing.T) {
+			_, cmd := New().Update(esc)
+
+			require.Nil(t, cmd)
 		})
 	})
 
