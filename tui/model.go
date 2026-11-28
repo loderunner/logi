@@ -152,6 +152,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, nil
 
+	case filterbar.SubmitMsg:
+		// A key typed after Enter changed the text before the message came
+		// back. The text on screen is the one to apply, at the next Enter.
+		if msg.Text != m.bar.Value() {
+			return m, nil
+		}
+
+		return m.applyFilter(msg.Text)
+
+	case filterbar.CancelMsg:
+		m.bar = m.bar.Blur()
+		m.focus = focusTable
+
+		// Esc cleared the error, if any, which gives its line back.
+		return m.layout()
+
 	case tickMsg:
 		m = m.updateRate(time.Time(msg))
 
@@ -173,9 +189,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // key routes a key press. Ctrl+C always quits. The bar takes every other key
-// while it has focus, q included, except Enter, which applies its text and
-// leaves the bar unless the text is wrong, and Esc, which leaves it. The
-// detail pane takes every key but q, and `/` does nothing there. The table has
+// while it has focus, q included. The detail pane takes every key but q, and `/` does nothing there. The table has
 // the rest.
 func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if msg.String() == "ctrl+c" {
@@ -183,16 +197,6 @@ func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 
 	if m.focus == focusFilter {
-		switch msg.String() {
-		case "enter":
-			return m.applyFilter()
-		case "esc":
-			m.bar = m.bar.Revert().Blur()
-			m.focus = focusTable
-
-			return m.layout()
-		}
-
 		return m.updateBar(msg)
 	}
 
@@ -223,12 +227,13 @@ func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m.updateTable(msg)
 }
 
-// applyFilter parses the bar's text and, when it parses, filters the table by
-// it. An empty text parses to no filter, which shows every row. When it
-// doesn't parse, the bar shows the error under itself, keeps focus and its
-// text, and the filter that was applied stays.
-func (m Model) applyFilter() (Model, tea.Cmd) {
-	filter, err := kql.Parse(m.bar.Value())
+// applyFilter parses text, which the bar submitted, and when it parses,
+// filters the table by it and gives the focus back to the table. An empty text
+// parses to no filter, which shows every row. When it doesn't parse, the bar
+// shows the error under itself, keeps focus and its text, and the filter that
+// was applied stays.
+func (m Model) applyFilter(text string) (Model, tea.Cmd) {
+	filter, err := kql.Parse(text)
 	if err != nil {
 		m.bar = m.bar.SetError(err.Error())
 
