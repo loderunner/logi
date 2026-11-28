@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -16,7 +17,6 @@ import (
 
 	"github.com/loderunner/logi/ingest"
 	"github.com/loderunner/logi/kql"
-	"github.com/loderunner/logi/logstore"
 	"github.com/loderunner/logi/tui/detail"
 	"github.com/loderunner/logi/tui/filterbar"
 	"github.com/loderunner/logi/tui/table"
@@ -63,12 +63,24 @@ const (
 	focusFilter
 )
 
+// keyMap is the keys that no pane handles.
+type keyMap struct {
+	// ForceQuit quits from every pane. Quit quits from every pane but the bar,
+	// which takes q as text.
+	ForceQuit, Quit key.Binding
+	// Filter focuses the bar. It is disabled while the detail pane is shown,
+	// which only Esc, q and Ctrl+C leave.
+	Filter key.Binding
+}
+
 // Model is the root bubbletea model. It lays out the filter bar, the table,
 // the detail pane and the status bar, decides which of them takes the keys,
 // and passes what one pane produces, such as a filter or a row to show, to
 // another.
 type Model struct {
 	opts Options
+
+	keyMap keyMap
 
 	// bar is the top line, with its error line under it when it has one. focus
 	// says whether it or the table takes the keys.
@@ -102,6 +114,11 @@ type Model struct {
 // New returns a Model that shows the rows of source.
 func New(source table.Rows, opts Options) Model {
 	return Model{
+		keyMap: keyMap{
+			ForceQuit: key.NewBinding(key.WithKeys("ctrl+c")),
+			Quit:      key.NewBinding(key.WithKeys("q")),
+			Filter:    key.NewBinding(key.WithKeys("/")),
+		},
 		opts:    opts,
 		bar:     filterbar.New(),
 		table:   table.New(source),
@@ -145,12 +162,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateTable(msg)
 
 	case table.OpenMsg:
-		return m.openDetail(msg.Row), nil
+		m.detail = m.detail.Open(
+			"Detail: "+table.FormatTime(msg.Row.TS),
+			msg.Row.Raw,
+		)
+
+		return m.setShowDetail(true), nil
 
 	case detail.CloseMsg:
-		m.showDetail = false
-
-		return m, nil
+		return m.setShowDetail(false), nil
 
 	case filterbar.SubmitMsg:
 		// A key typed after Enter changed the text before the message came
@@ -183,48 +203,54 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.fail(msg.Err)
 
 	default:
-		// What the bar sends itself, such as a paste, comes back here.
+		// The bar's input sends itself messages, such as the text of a
+		// clipboard paste. They come back here, and so does a terminal paste,
+		// which the bar ignores without focus.
 		return m.updateBar(msg)
 	}
 }
 
-// key routes a key press. Ctrl+C always quits. The bar takes every other key
-// while it has focus, q included. The detail pane takes every key but q, and `/` does nothing there. The table has
-// the rest.
+// key routes a key press, in this order:
+//
+//  1. Ctrl+C quits, whichever pane has focus.
+//  2. While the bar has focus, it captures every other key, because q and /
+//     are text there.
+//  3. The keys of the root model: q quits, and / focuses the bar.
+//  4. The pane on screen takes the rest: the detail pane while it's shown,
+//     and the table otherwise.
 func (m Model) key(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
+	switch {
+	case key.Matches(msg, m.keyMap.ForceQuit):
 		return m.quit()
-	}
-
-	if m.focus == focusFilter {
+	case m.focus == focusFilter:
 		return m.updateBar(msg)
-	}
-
-	// While the detail pane covers the table, it gets every other key.
-	if m.showDetail {
-		if msg.String() == "q" {
-			return m.quit()
-		}
-
-		var cmd tea.Cmd
-		m.detail, cmd = m.detail.Update(msg)
-
-		return m, cmd
-	}
-
-	switch msg.String() {
-	case "/":
+	case key.Matches(msg, m.keyMap.Quit):
+		return m.quit()
+	case key.Matches(msg, m.keyMap.Filter):
 		var cmd tea.Cmd
 
 		m.bar, cmd = m.bar.Focus()
 		m.focus = focusFilter
 
 		return m, cmd
-	case "q":
-		return m.quit()
-	}
+	case m.showDetail:
+		var cmd tea.Cmd
 
-	return m.updateTable(msg)
+		m.detail, cmd = m.detail.Update(msg)
+
+		return m, cmd
+	default:
+		return m.updateTable(msg)
+	}
+}
+
+// setShowDetail shows or hides the detail pane, in place of the table. The
+// pane is modal, so / doesn't leave it for the bar.
+func (m Model) setShowDetail(show bool) Model {
+	m.showDetail = show
+	m.keyMap.Filter.SetEnabled(!show)
+
+	return m
 }
 
 // applyFilter parses text, which the bar submitted, and when it parses,
@@ -288,14 +314,6 @@ func (m Model) layout() (Model, tea.Cmd) {
 	m.detail = m.detail.SetSize(m.width, m.paneHeight())
 
 	return m, cmd
-}
-
-// openDetail opens the detail pane on row.
-func (m Model) openDetail(row logstore.Row) Model {
-	m.detail = m.detail.Open("Detail: "+table.FormatTime(row.TS), row.Raw)
-	m.showDetail = true
-
-	return m
 }
 
 // fail records err as the failure that ended the program, and ends it.

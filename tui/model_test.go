@@ -846,6 +846,21 @@ func TestModel(t *testing.T) {
 			require.Nil(t, m.View().Cursor)
 		})
 
+		t.Run("/ focuses the bar again once the detail pane closes",
+			func(t *testing.T) {
+				m, _ := withRows(t, size, logstore.Row{
+					ID:     1,
+					Raw:    `{"msg":"hi"}`,
+					Values: []string{"hi"},
+				})
+				m, _ = send(t, m, enter)
+				m, _ = send(t, m, esc)
+
+				m, _ = send(t, m, slash)
+				require.Equal(t, focusFilter, m.focus)
+			},
+		)
+
 		t.Run(
 			"the page is two lines shorter than the window",
 			func(t *testing.T) {

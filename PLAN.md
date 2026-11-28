@@ -297,7 +297,8 @@ the same ingest path for both:
     down from the filter goes to the table header, down from the header goes
     to row 0, and down from row 0 goes to row 1. Hidden panes are skipped.
   - Tab into the table lands on the selected row, not the header.
-  - `/` focuses the filter, and unhides it if it was hidden.
+  - `/` focuses the filter, and unhides it if it was hidden. It does nothing
+    while the detail pane is shown, which Esc closes first.
   - The table has focus at startup.
 - **Pane toggles.** Ctrl+G (graph), Ctrl+F (filter), Ctrl+T (table). Ctrl+F is
   removed from the filter text input's key map; `→` still moves its
@@ -313,7 +314,8 @@ the same ingest path for both:
     always shown, and there's no `?` help screen.
   - The hints are the focused pane's keys, then `│`, then a global tail:
     `/ filter`, `^G^F^T panes`, `q quit`. In the filter, the tail is only
-    `^C quit`, because `/` and `q` are typed as text there.
+    `^C quit`, because `/` and `q` are typed as text there. In the detail
+    pane, it has no `/ filter`, because `/` does nothing there.
   - Pane keys:
     - Row: `↑↓ scroll`, `⏎ detail`, `←→ columns`, `c picker`.
     - Header: `⏎ flip order`, `←→ columns`.
@@ -433,4 +435,4 @@ one feature.
 | F18 | Enter on the table header flips newest at the top or the bottom, with `▼`/`▲` on the timestamp header, and it's remembered. | Order toggle, follow at either end, persisted. |
 | F19 | Ctrl+G, Ctrl+F and Ctrl+T hide and show the panes, and it's remembered. `/` brings the filter back. | Pane visibility in the config file, layout reflow, Ctrl+F removed from the text input's key map. |
 | F20 | `logi --hide-histogram /tmp/app.log` and `LOGI_HIDE_LOG=1 logi …`. | `--hide-*` flags and environment variables, through config precedence. |
-| F21 | Key hints for the focused pane on the left of the status bar, then `/`, `^G^F^T` and `q`. They change as focus moves. A narrower terminal drops the global keys, then all hints, and the status stays whole. | Per-pane `key.Binding`s that drive both key handling and bubbles `help`, the global tail, and the fallback from all hints to pane keys to none. |
+| F21 | Key hints for the focused pane on the left of the status bar, then `/`, `^G^F^T` and `q`. They change as focus moves. A narrower terminal drops the global keys, then all hints, and the status stays whole. | bubbles `help` over the `key.Binding`s that each pane's `keyMap` already handles keys with, the root's bindings as the global tail (a disabled binding shows no hint), and the fallback from all hints to pane keys to none. |

@@ -112,12 +112,24 @@ only `tea.Model`. Each pane is a child model in its own package.
 - The parent owns layout, visibility and focus, and orchestrates in `Update` and
   `View`. It pushes each child's size with `SetSize`. It calls `Focus` and
   `Blur` only on a child that draws differently while focused.
+- A setter that changes what a child queries, such as `table.SetSize` or
+  `table.SetFilter`, returns `(Model, tea.Cmd)` and starts the query itself.
+  Other setters return `Model`.
 - The parent routes every message explicitly: it switches on the type and calls
-  the child that needs it. Keys go to the focused or shown child. A message the
-  parent routes is exported.
-- A child tells its parent about something the parent owns (closing, a new
-  layout, a failure) by returning a `tea.Cmd` that yields an exported message of
-  its own package, such as `detail.CloseMsg` or `table.ErrMsg`.
+  the child that needs it. A message the parent routes is exported.
+- Keys are routed in one place, in this order: keys that work everywhere
+  (Ctrl+C), then a capturing child (a focused one that takes text, like the
+  filter bar), then the parent's own keys, then the focused or shown child.
+- Every model declares the keys it handles as an unexported `keyMap` of
+  `key.Binding`s and matches them with `key.Matches`. A key that a state turns
+  off, such as `/` over the detail pane, is a binding disabled with
+  `SetEnabled`, so the router and the key hints stay free of special cases.
+- A child tells its parent about something the parent owns (closing, opening
+  another pane, a failure) by returning a `tea.Cmd` that yields an exported
+  message of its own package, such as `detail.CloseMsg` or `table.ErrMsg`. The
+  parent acts when the message comes back. A message can arrive after newer
+  keys, so it carries what it is about, as `filterbar.SubmitMsg` carries its
+  text.
 - Models use value receivers and shallow copies by default. Clone at the
   boundaries: when a slice or map leaves `Update` inside a `tea.Cmd` closure,
   and when two owners would otherwise share a mutable collection. Everywhere
